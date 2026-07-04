@@ -344,6 +344,7 @@ function render(){
       <button class="${S.view==='board'?'active':''}" onclick="go('board')">📋 Board</button>
       <button class="${S.view==='my'?'active':''}" onclick="go('my')">🗂 My Board</button>
       <button class="${S.view==='progress'?'active':''}" onclick="go('progress')">📊 Progress</button>
+      <button class="${S.view==='ask'?'active':''}" onclick="go('ask')">💬 Ask</button>
       <button class="${S.view==='report'?'active':''}" onclick="go('report')">📄 Report</button>
     </div>
     <div class="nav-right">
@@ -354,7 +355,7 @@ function render(){
       <span onclick="teamModal()">${avatar(ME)}</span>
     </div>
   </nav>
-  <main>${{home:homeView,board:boardView,my:myView,progress:progressView,report:reportView}[S.view]()}</main>`;
+  <main>${{home:homeView,board:boardView,my:myView,progress:progressView,report:reportView,ask:askView}[S.view]()}</main>`;
 }
 function go(v){
   S.view=v;
@@ -834,6 +835,47 @@ function progressView(){
       </div>
     </div>
   </div>`;
+}
+
+/* ---------- ASK ---------- */
+let ASKLOG=[];
+function askView(){
+  const e=evRow();
+  return `<div class="view-title"><h2>💬 Ask the board</h2>
+    <span class="sub">${e?esc(e.name):''} · answers come only from this board's notes and attached files</span></div>
+  <div class="panel" style="max-width:880px;margin-top:16px">
+    <div id="ask-log">
+      ${ASKLOG.map(m=>`<div style="display:flex;gap:11px;padding:12px 0;border-bottom:1px solid #F0EADC">
+        <div style="width:30px;height:30px;border-radius:8px;flex:none;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:12px;background:${m.role==='user'?ME.color:C.ink}">${m.role==='user'?ME.initials:'✦'}</div>
+        <div style="flex:1;font-size:14px;line-height:1.6;white-space:pre-wrap">${esc(m.text)}
+          ${(m.files||[]).length?'<div style="margin-top:8px">'+m.files.map(f=>`<a class="file-chip" href="${esc(f.url)}" target="_blank" rel="noopener" style="text-decoration:none">📄 ${esc(f.name)}</a>`).join(' ')+'</div>':''}
+        </div>
+      </div>`).join('')||'<p style="color:var(--muted);font-weight:600;padding:6px 0">Ask anything about this event — costs, contacts, deadlines, outstanding items. Attach PDFs to categories to teach it more.</p>'}
+    </div>
+    <div class="msg-in">
+      <input id="ask-in" placeholder="e.g. Who do we contact for the liquor licence?" onkeydown="if(event.key==='Enter')sendAsk()">
+      <button class="btn orange" id="ask-go" onclick="sendAsk()">Ask</button>
+    </div>
+  </div>`;
+}
+async function sendAsk(){
+  const q=$('ask-in').value.trim(); if(!q)return;
+  ASKLOG.push({role:'user',text:q});
+  ASKLOG.push({role:'ai',text:'✦ Searching the board…'});
+  render();
+  try{
+    const {data:{session}}=await sb.auth.getSession();
+    const res=await fetch(`${SUPABASE_URL}/functions/v1/ask-board`,{
+      method:'POST',
+      headers:{'Content-Type':'application/json','apikey':SUPABASE_KEY,'Authorization':`Bearer ${session.access_token}`},
+      body:JSON.stringify({question:q,event_id:S.event}),
+    });
+    const j=await res.json();
+    if(!res.ok||j.error)throw new Error(j.error||'Request failed');
+    ASKLOG[ASKLOG.length-1]={role:'ai',text:j.text,files:j.files||[]};
+  }catch(e){ASKLOG[ASKLOG.length-1]={role:'ai',text:'⚠️ '+(e.message||e)};}
+  render();
+  const inp=$('ask-in'); if(inp)inp.focus();
 }
 
 /* ---------- REPORT ---------- */
