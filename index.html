@@ -473,9 +473,10 @@ function boardView(){
   </div>
   <div class="files-row no-print">
     <span style="font-size:12px;font-weight:800;color:var(--muted)">📁 PROJECT FILES</span>
-    ${cur.files.map(f=>f.url
-      ?`<a class="file-chip" href="${esc(f.url)}" target="_blank" rel="noopener">🗂 ${esc(f.name)}</a>`
-      :`<span class="file-chip" onclick="toast('No link saved for this folder yet — click ＋ to add one')">🗂 ${esc(f.name)}</span>`).join('')}
+    ${cur.files.map(f=>`<span class="file-chip">${f.url
+      ?`<a href="${esc(f.url)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none">🗂 ${esc(f.name)}</a>`
+      :`<span onclick="toast('No link saved for this folder yet')">🗂 ${esc(f.name)}</span>`}
+      <button style="background:none;color:${C.lava};font-weight:800;padding:0 0 0 4px" title="Remove folder link" onclick="delDrive('${f.id}')">✕</button></span>`).join('')}
     <span class="file-chip" style="border-style:dashed;color:var(--muted)" onclick="linkDrive()">＋ Link Drive folder</span>
   </div>
   ${railBoard()}`;
@@ -589,6 +590,11 @@ async function linkDrive(){
   if(error)throw error; await loadEvent(); render(); toast('📁 Drive folder linked to this board');}catch(e){fail(e);}
 }
 
+async function delDrive(id){
+  if(!confirm('Remove this Drive folder link from the board?'))return;
+  try{const {error}=await sb.from('drive_links').delete().eq('id',id); if(error)throw error;
+  await loadEvent(); render(); toast('Folder link removed');}catch(e){fail(e);}
+}
 async function uploadAttachment(input,colId){
   const file=input.files[0]; if(!file)return; input.value='';
   if(file.size>15*1024*1024){toast('Max file size is 15 MB');return;}
