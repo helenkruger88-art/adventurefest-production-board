@@ -691,6 +691,7 @@ function askClaude(id){
     <div class="claude-resp" id="cl-r" style="display:none;white-space:pre-wrap;max-height:45vh;overflow-y:auto"></div>
     <div class="row">
       <button class="btn ghost" onclick="closeModal()">Close</button>
+      <button class="btn" id="cl-mail" style="display:none" onclick="mailClaude('${id}')">📧 Send as email</button>
       <button class="btn" id="cl-save" style="display:none" onclick="saveClaude('${id}')">💾 Save to note</button>
       <button class="btn orange" id="cl-go" onclick="runClaude('${id}')">✦ Ask Claude</button>
     </div>`);
@@ -715,6 +716,7 @@ async function runClaude(id){
     if(!res.ok||j.error)throw new Error(j.error||'Request failed');
     lastClaudeText=j.text; r.textContent=j.text;
     $('cl-save').style.display='';
+    if(ME.email_connected)$('cl-mail').style.display='';
   }catch(e){r.textContent='⚠️ '+(e.message||e);}
   b.disabled=false;
 }
@@ -851,11 +853,70 @@ function teamModal(){
     <label>Temporary password (share it with them — min 8 characters)</label><input id="tm-pw" placeholder="They can change it later">
     <label>Colour</label>
     <div class="swatch-pick" id="tm-colors">${Object.values(C).slice(0,9).map((c,i)=>`<button style="background:${c}" class="${i===0?'sel':''}" onclick="pickColor(this)" data-c="${c}"></button>`).join('')}</div>
+    <div style="margin-top:16px;border-top:1px solid #F0EADC;padding-top:12px">
+      <button class="btn ${ME.email_connected?'ghost':'orange'}" onclick="connectEmailModal()">📧 ${ME.email_connected?'Email connected ✓ · update':'Connect my email'}</button>
+    </div>
     <div class="row">
       <button class="btn ghost" style="margin-right:auto" onclick="changePwModal()">🔑 Change my password</button>
       <button class="btn ghost" onclick="signOut()">Sign out</button>
       <button class="btn orange" id="tm-go" onclick="inviteMember()">Add member</button>
     </div>`);
+}
+function connectEmailModal(){
+  const dom=(ME.email.split('@')[1]||'');
+  openModal(`<h3>📧 Connect my email</h3>
+    <div style="font-size:12.5px;color:var(--muted);line-height:1.5;margin-bottom:4px">Lets Claude send emails you approve, from your own address. Your password is stored encrypted and never shown to anyone.</div>
+    <label>Email address</label><input id="em-addr" value="${esc(ME.email)}">
+    <label>Mail server (SMTP)</label><input id="em-host" value="mail.${esc(dom)}">
+    <div style="display:flex;gap:12px">
+      <div style="width:120px"><label>Port</label><input id="em-port" type="number" value="465"></div>
+      <div style="flex:1"><label>Mailbox password</label><input id="em-pw" type="password" placeholder="Your email password"></div>
+    </div>
+    <div class="row"><button class="btn ghost" onclick="closeModal()">Cancel</button>
+    <button class="btn orange" id="em-go" onclick="connectEmailSave()">Connect</button></div>`);
+}
+async function connectEmailSave(){
+  const email=$('em-addr').value.trim(), host=$('em-host').value.trim(), pw=$('em-pw').value;
+  if(!email||!host||!pw){toast('All fields are required');return;}
+  const b=$('em-go');b.disabled=true;
+  try{
+    const {data:{session}}=await sb.auth.getSession();
+    const res=await fetch(`${SUPABASE_URL}/functions/v1/email-connect`,{
+      method:'POST',
+      headers:{'Content-Type':'application/json','apikey':SUPABASE_KEY,'Authorization':`Bearer ${session.access_token}`},
+      body:JSON.stringify({email,smtp_host:host,smtp_port:parseInt($('em-port').value,10)||465,password:pw}),
+    });
+    const j=await res.json();
+    if(!res.ok||j.error)throw new Error(j.error||'Could not save');
+    await loadCore(); closeModal(); toast('📧 Email connected — ✦ Claude can now send drafts you approve');
+  }catch(e){fail(e);b.disabled=false;}
+}
+function mailClaude(id){
+  const n=cur.notes.find(x=>x.id===id);
+  openModal(`<h3>📧 Send as email · <span style="font-weight:400;font-size:14px">from ${esc(ME.email)}</span></h3>
+    <label>To</label><input id="ml-to" type="email" placeholder="recipient@example.co.za">
+    <label>Subject</label><input id="ml-subj" value="${esc(n.title)}">
+    <label>Message (edit before sending)</label>
+    <textarea id="ml-body" rows="10" style="font-size:13px">${esc(lastClaudeText)}</textarea>
+    <div class="row"><button class="btn ghost" onclick="closeModal()">Cancel</button>
+    <button class="btn orange" id="ml-go" onclick="sendEmailNow('${id}')">📧 Send email</button></div>`);
+}
+async function sendEmailNow(id){
+  const to=$('ml-to').value.trim(), subj=$('ml-subj').value.trim(), body=$('ml-body').value;
+  if(!to||!subj||!body){toast('Recipient, subject and message are required');return;}
+  const b=$('ml-go');b.disabled=true;b.textContent='Sending…';
+  try{
+    const {data:{session}}=await sb.auth.getSession();
+    const res=await fetch(`${SUPABASE_URL}/functions/v1/send-email`,{
+      method:'POST',
+      headers:{'Content-Type':'application/json','apikey':SUPABASE_KEY,'Authorization':`Bearer ${session.access_token}`},
+      body:JSON.stringify({to,subject:subj,body,note_id:id}),
+    });
+    const j=await res.json();
+    if(j.error==='NO_EMAIL'){toast('Connect your email first (avatar → Connect my email)');b.disabled=false;b.textContent='📧 Send email';return;}
+    if(!res.ok||j.error)throw new Error(j.error||'Send failed');
+    closeModal(); await loadEvent(); render(); toast(`📧 Sent to ${to} — logged on the note`);
+  }catch(e){fail(e);b.disabled=false;b.textContent='📧 Send email';}
 }
 function pickColor(btn){document.querySelectorAll('#tm-colors button').forEach(b=>b.classList.remove('sel'));btn.classList.add('sel');}
 async function inviteMember(){
