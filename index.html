@@ -620,18 +620,43 @@ async function notify(userId,body){
 function askClaude(id){
   const n=cur.notes.find(x=>x.id===id);
   openModal(`<h3>✦ Ask Claude · <span style="font-weight:400;font-size:14px">${esc(n.title)}</span></h3>
-    <label>Your brief</label>
-    <textarea id="cl-q" rows="3" placeholder="e.g. Draft the follow-up email for this task…"></textarea>
-    <div class="claude-resp">✦ Claude actions (sending emails, drafting docs from your Drive) are the next phase of this build — they need the email and Drive connections set up first.<br><br>For now, your brief is saved onto the note so it's ready the moment Claude is connected.</div>
-    <div class="row"><button class="btn ghost" onclick="closeModal()">Close</button>
-    <button class="btn" onclick="saveBrief('${id}')">Save brief to note</button></div>`);
+    <label>Your brief — Claude knows this task, its category and your event</label>
+    <textarea id="cl-q" rows="3" placeholder="e.g. Draft the sponsor follow-up email for this task…"></textarea>
+    <div class="claude-resp" id="cl-r" style="display:none;white-space:pre-wrap;max-height:45vh;overflow-y:auto"></div>
+    <div class="row">
+      <button class="btn ghost" onclick="closeModal()">Close</button>
+      <button class="btn" id="cl-save" style="display:none" onclick="saveClaude('${id}')">💾 Save to note</button>
+      <button class="btn orange" id="cl-go" onclick="runClaude('${id}')">✦ Ask Claude</button>
+    </div>`);
 }
-async function saveBrief(id){
-  const q=$('cl-q').value.trim(); if(!q){closeModal();return;}
+let lastClaudeText='';
+async function runClaude(id){
+  const q=$('cl-q').value.trim(); if(!q){toast('Type a brief first');return;}
+  const r=$('cl-r'); r.style.display='block'; r.textContent='✦ Claude is thinking…';
+  const b=$('cl-go'); b.disabled=true;
+  try{
+    const {data:{session}}=await sb.auth.getSession();
+    const res=await fetch(`${SUPABASE_URL}/functions/v1/ask-claude`,{
+      method:'POST',
+      headers:{'Content-Type':'application/json','apikey':SUPABASE_KEY,'Authorization':`Bearer ${session.access_token}`},
+      body:JSON.stringify({note_id:id,brief:q}),
+    });
+    const j=await res.json();
+    if(j.error==='NOT_CONNECTED'){
+      r.textContent="✦ Claude isn't connected yet — the API key still needs to be added in Supabase. Your brief is still here; try again once it's connected.";
+      b.disabled=false; return;
+    }
+    if(!res.ok||j.error)throw new Error(j.error||'Request failed');
+    lastClaudeText=j.text; r.textContent=j.text;
+    $('cl-save').style.display='';
+  }catch(e){r.textContent='⚠️ '+(e.message||e);}
+  b.disabled=false;
+}
+async function saveClaude(id){
   const n=cur.notes.find(x=>x.id===id);
-  const desc=(n.description?n.description+'\n':'')+'✦ Claude brief: '+q;
+  const desc=(n.description?n.description+'\n\n':'')+'✦ Claude:\n'+lastClaudeText;
   try{const {error}=await sb.from('notes').update({description:desc}).eq('id',id); if(error)throw error;
-  closeModal(); await loadEvent(); render(); toast('✦ Brief saved to the note');}catch(e){fail(e);}
+  closeModal(); await loadEvent(); render(); toast('✦ Saved to the note');}catch(e){fail(e);}
 }
 
 /* ---------- MY BOARD ---------- */
