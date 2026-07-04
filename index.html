@@ -218,18 +218,18 @@ const STANDARD_CATS = [
 ];
 
 const LOGO = `
-<svg width="46" height="40" viewBox="0 0 320 200" xmlns="http://www.w3.org/2000/svg">
- <circle cx="236" cy="58" r="44" fill="${C.fire}"/>
- <g stroke="${C.ink}" stroke-width="9" stroke-linejoin="round">
-  <polygon points="160,16 92,152 228,152" fill="#E8D9BD"/>
-  <polygon points="160,16 126,152 92,152" fill="#D9971E"/>
-  <polygon points="146,44 170,96 128,152 108,152" fill="#F4AF23"/>
-  <polygon points="70,68 18,152 122,152" fill="#B96A3C"/>
-  <polygon points="70,68 42,152 18,152" fill="${C.forest}"/>
-  <polygon points="70,68 96,152 122,152" fill="#8C6A47"/>
-  <polygon points="254,62 202,152 306,152" fill="${C.water}"/>
-  <polygon points="254,62 228,152 202,152" fill="${C.teal}"/>
-  <polygon points="280,107 306,152 254,152" fill="${C.sky}"/>
+<svg width="84" height="38" viewBox="60 -95 1640 760" xmlns="http://www.w3.org/2000/svg">
+ <circle cx="1120" cy="165" r="255" fill="${C.fire}"/>
+ <g stroke="#2E3140" stroke-width="26" stroke-linejoin="round">
+  <polygon points="820,10 480,612 790,612" fill="#D9971E"/>
+  <polygon points="820,10 790,612 1245,612" fill="#E8D9BD"/>
+  <polygon points="730,205 575,612 730,612" fill="#C8871B"/>
+  <polygon points="390,215 105,612 300,612" fill="${C.forest}"/>
+  <polygon points="390,215 300,612 505,612" fill="#8C6A47"/>
+  <polygon points="390,215 505,612 690,612" fill="#B96A3C"/>
+  <polygon points="1385,245 1205,612 1395,612" fill="${C.teal}"/>
+  <polygon points="1385,245 1395,612 1655,612" fill="${C.water}"/>
+  <polygon points="1460,440 1655,612 1402,612" fill="${C.sky}"/>
  </g>
 </svg>`;
 
@@ -345,7 +345,7 @@ async function switchEvent(id){S.event=id;try{await loadEvent();render();}catch(
 /* ---------- LOGIN ---------- */
 function loginView(){
   return `<div class="login">
-    <div style="text-align:center">${LOGO.replace('width="46" height="40"','width="120" height="102"')}
+    <div style="text-align:center">${LOGO.replace('width="84" height="38"','width="290" height="126"')}
       <h1 style="font-size:30px;margin-top:6px">ADVENTURE FEST SA</h1>
       <div style="letter-spacing:6px;font-weight:800;color:#8C6A47;font-size:12px">— PRODUCTION HQ —</div>
     </div>
