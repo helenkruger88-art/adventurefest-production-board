@@ -102,6 +102,7 @@ main{padding:26px 26px 70px;max-width:1500px;margin:0 auto}
 .note .who{font-size:11px;font-weight:700;color:#6d6858;flex:1}
 .note.done{opacity:.55}
 .note.done h4{text-decoration:line-through}
+.due{display:inline-flex;align-items:center;gap:4px;font-size:10.5px;font-weight:800;border-radius:12px;padding:3px 9px;margin-bottom:8px}
 .chk{width:20px;height:20px;border-radius:6px;border:2px solid #b3ab94;background:#fff;display:inline-flex;
   align-items:center;justify-content:center;font-size:12px;color:#fff;flex:none}
 .chk.on{background:var(--forest);border-color:var(--forest)}
@@ -252,6 +253,22 @@ function tint(hex,a){return `color-mix(in srgb, ${hex} ${a}%, white)`;}
 function toast(m){const t=$('toast');t.innerHTML=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),3000);}
 function fail(e){console.error(e);toast('⚠️ '+(e.message||e));}
 function avatar(u){return u?`<span class="avatar" style="background:${u.color}" title="${esc(u.name)}">${u.initials}</span>`:'';}
+function dueState(n){
+  if(!n.due_date||n.done)return null;
+  const d=Math.ceil((new Date(n.due_date+'T23:59')-Date.now())/86400000);
+  if(d<0)return{d,cls:'over'};
+  if(d<=(n.warn_days??7))return{d,cls:'warn'};
+  return{d,cls:'ok'};
+}
+function dueChip(n){
+  if(!n.due_date)return '';
+  const label=new Date(n.due_date+'T12:00').toLocaleDateString('en-ZA',{day:'numeric',month:'short'});
+  const s=dueState(n);
+  if(!s)return `<span class="due" style="background:rgba(0,0,0,.06);color:#6d6858;opacity:.6">📅 ${label}</span>`;
+  if(s.cls==='over')return `<span class="due" style="background:${C.lava};color:#fff">⚠ ${label} · ${-s.d}d overdue</span>`;
+  if(s.cls==='warn')return `<span class="due" style="background:${C.earth};color:#4A3506">⏰ ${label} · ${s.d===0?'due today':'in '+s.d+'d'}</span>`;
+  return `<span class="due" style="background:rgba(0,0,0,.07);color:#6d6858">📅 ${label}</span>`;
+}
 function ago(ts){const s=(Date.now()-new Date(ts).getTime())/1000;
   if(s<60)return 'Just now'; if(s<3600)return Math.floor(s/60)+'m ago'; if(s<86400)return Math.floor(s/3600)+'h ago';
   return Math.floor(s/86400)+'d ago';}
@@ -303,7 +320,7 @@ function statsFor(notes,colId){
 }
 const eventStatsCache={};
 async function loadHomeStats(){
-  const {data,error}=await sb.from('notes').select('event_id,column_id,done');
+  const {data,error}=await sb.from('notes').select('event_id,column_id,done,due_date,warn_days');
   if(error)throw error;
   const {data:allCols,error:e2}=await sb.from('columns').select('*').order('position');
   if(e2)throw e2;
@@ -391,6 +408,8 @@ function homeView(){
       const mine=notes.filter(n=>n.assignee===ME.id&&!n.done).length;
       return `<div class="event-card" style="border-top-color:${cols[0]?cols[0].color:C.fire}">
         <h3>${esc(e.name)}</h3><div class="date">📅 ${esc(e.date_label)} &nbsp;·&nbsp; ${mine} task${mine!==1?'s':''} on your plate</div>
+        ${(()=>{const f=notes.filter(nn=>(dueState(nn)||{}).cls&&dueState(nn).cls!=='ok').length;
+          return f?`<div style="color:${C.lava};font-weight:800;font-size:12px;margin:-8px 0 10px">⚠ ${f} deadline${f>1?'s':''} need${f>1?'':'s'} attention</div>`:'';})()}
         <div class="big-progress"><i style="width:${s.p}%"></i></div>
         <div class="pct-row"><span>${s.d} of ${s.t} tasks done</span><span>${s.p}%</span></div>
         <div class="minibars">
@@ -462,10 +481,11 @@ function railBoard(){
   return `<div class="board-wrap">
     <div class="rail">
       ${cur.cols.map(x=>{const xs=statsFor(cur.notes,x.id);
+        const flag=cur.notes.some(nn=>nn.column_id===x.id&&(dueState(nn)||{}).cls&&dueState(nn).cls!=='ok');
         return `<button class="rcol ${x.id===S.col?'sel':''}" style="background:${x.color}" draggable="true"
           ondragstart="dragCol('${x.id}')" ondragover="event.preventDefault()" ondrop="dropCol('${x.id}')"
-          onclick="selectCol('${x.id}')" title="${esc(x.name)} — ${xs.p}% done · drag to reorder">
-          <span class="rname">${esc(x.name)}</span><span class="rcount">${xs.d}/${xs.t}</span>
+          onclick="selectCol('${x.id}')" title="${esc(x.name)} — ${xs.p}% done${flag?' · deadline approaching!':''} · drag to reorder">
+          ${flag?'<span title="Deadline approaching">⚠</span>':''}<span class="rname">${esc(x.name)}</span><span class="rcount">${xs.d}/${xs.t}</span>
         </button>`;}).join('')}
       <button class="add-rail" onclick="addCol()">＋ Add column</button>
     </div>
@@ -481,7 +501,7 @@ function railBoard(){
           const st=n.subtasks||[]; const sd=st.filter(s=>s.d).length;
           const shortDesc=n.description&&n.description.length>170?n.description.slice(0,170)+'…':n.description;
           return `<div class="note ${n.done?'done':''}" style="--note-c:${c.color};--note-bg:${tint(c.color,13)}" onclick="editNote('${n.id}')" title="Click to open & edit">
-            <h4>${esc(n.title)}</h4><p>${esc(shortDesc)}</p>
+            <h4>${esc(n.title)}</h4>${dueChip(n)}<p>${esc(shortDesc)}</p>
             ${st.length?`<div style="margin-bottom:8px">
               ${st.map((s,i)=>`<div style="display:flex;gap:7px;align-items:center;padding:2px 0">
                 <button class="chk ${s.d?'on':''}" style="width:16px;height:16px;font-size:10px;border-radius:5px" onclick="event.stopPropagation();cardSubToggle('${n.id}',${i})">${s.d?'✔':''}</button>
@@ -563,15 +583,20 @@ function addNoteModal(colId){
   openModal(`<h3>New sticky note · <span style="color:${c.color}">${esc(c.name)}</span></h3>
     <label>What needs doing?</label><input id="f-title" placeholder="e.g. Book sound engineer">
     <label>Details</label><textarea id="f-desc" rows="2" placeholder="Optional details…"></textarea>
+    <div style="display:flex;gap:12px">
+      <div style="flex:1"><label>Deadline (optional)</label><input type="date" id="f-due"></div>
+      <div style="width:130px"><label>Flag days before</label><input type="number" id="f-warn" value="7" min="0" max="90"></div>
+    </div>
     <label>Allocate to</label><select id="f-who">${assigneeOptions(ME.id)}</select>
     <div class="row"><button class="btn ghost" onclick="closeModal()">Cancel</button>
     <button class="btn orange" onclick="saveNote('${colId}')">Add note</button></div>`);
 }
+function readWarn(){const v=parseInt($('f-warn').value,10);return isNaN(v)?7:Math.max(0,Math.min(90,v));}
 async function saveNote(colId){
   const t=$('f-title').value.trim(); if(!t)return;
   const who=$('f-who').value||null;
   try{
-    const {error}=await sb.from('notes').insert({event_id:S.event,column_id:colId,title:t,description:$('f-desc').value.trim(),assignee:who,created_by:ME.id});
+    const {error}=await sb.from('notes').insert({event_id:S.event,column_id:colId,title:t,description:$('f-desc').value.trim(),assignee:who,created_by:ME.id,due_date:$('f-due').value||null,warn_days:readWarn()});
     if(error)throw error;
     await notify(who,`${ME.name.split(' ')[0]} assigned you: ${t}`);
     closeModal(); await loadEvent(); render();
@@ -589,6 +614,10 @@ function editNote(id){
     <div style="display:flex;gap:8px;margin-top:4px">
       <input id="f-subnew" placeholder="Add a step… (Enter to add)" onkeydown="if(event.key==='Enter'){event.preventDefault();subAdd();}">
       <button class="btn" type="button" onclick="subAdd()">＋</button>
+    </div>
+    <div style="display:flex;gap:12px">
+      <div style="flex:1"><label>Deadline</label><input type="date" id="f-due" value="${n.due_date||''}"></div>
+      <div style="width:130px"><label>Flag days before</label><input type="number" id="f-warn" value="${n.warn_days??7}" min="0" max="90"></div>
     </div>
     <label>Allocated to</label><select id="f-who">${assigneeOptions(n.assignee)}</select>
     <label>Column</label>
@@ -630,6 +659,8 @@ async function updNote(id){
     column_id:$('f-col').value,
     done:$('f-done').value==='1',
     subtasks:_subs,
+    due_date:$('f-due').value||null,
+    warn_days:readWarn(),
   };
   try{
     const {error}=await sb.from('notes').update(patch).eq('id',id); if(error)throw error;
@@ -709,6 +740,7 @@ function myView(){
         return `<div class="task-row ${n.done?'done':''}" style="--c:${c.color}" onclick="editNote('${n.id}')" title="Click to open this task">
           <button class="chk ${n.done?'on':''}" onclick="event.stopPropagation();toggleDone('${n.id}')">${n.done?'✔':''}</button>
           <div class="t"><b>${esc(n.title)}</b><span style="color:${c.color}">${esc(c.name)}</span></div>
+          ${dueChip(n)}
           <button class="claude-chip" style="--note-c:${c.color}" onclick="event.stopPropagation();askClaude('${n.id}')">✦ Ask Claude</button>
         </div>`;}).join(''):'<p style="color:var(--muted)">Nothing allocated to you on this event yet.</p>'}
     </div>
