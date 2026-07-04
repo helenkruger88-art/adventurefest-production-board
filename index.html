@@ -481,8 +481,11 @@ function railBoard(){
       <div class="col-prog" style="margin:12px 16px 0"><i style="width:${cs.p}%;background:${c.color}"></i></div>
       <div class="notes-grid">
         ${notes.map(n=>{const u=usr(n.assignee);
+          const st=n.subtasks||[]; const sd=st.filter(s=>s.d).length;
           return `<div class="note ${n.done?'done':''}" style="--note-c:${c.color};--note-bg:${tint(c.color,13)}" onclick="editNote('${n.id}')" title="Click to open & edit">
             <h4>${esc(n.title)}</h4><p>${esc(n.description)}</p>
+            ${st.length?`<div style="font-size:11px;font-weight:800;color:#6d6858;margin-bottom:8px">☑ ${sd}/${st.length} steps
+              <span style="display:block;height:5px;background:rgba(0,0,0,.08);border-radius:4px;margin-top:3px"><i style="display:block;height:100%;width:${Math.round(sd/st.length*100)}%;background:${c.color};border-radius:4px"></i></span></div>`:''}
             <div class="meta">
               <button class="chk ${n.done?'on':''}" onclick="event.stopPropagation();toggleDone('${n.id}')">${n.done?'✔':''}</button>
               ${u?avatar(u):''}<span class="who">${u?esc(u.name.split(' ')[0]):'Unassigned'}</span>
@@ -573,9 +576,16 @@ async function saveNote(colId){
 }
 function editNote(id){
   const n=cur.notes.find(x=>x.id===id); const c=cur.cols.find(c=>c.id===n.column_id);
+  _subs=(n.subtasks||[]).map(s=>({t:s.t,d:!!s.d}));
   openModal(`<h3>Open task · <span style="color:${c.color}">${esc(c.name)}</span></h3>
     <label>What needs doing?</label><input id="f-title" value="${esc(n.title)}">
     <label>Details</label><textarea id="f-desc" rows="3">${esc(n.description)}</textarea>
+    <label>Subtasks</label>
+    <div id="f-subs"></div>
+    <div style="display:flex;gap:8px;margin-top:4px">
+      <input id="f-subnew" placeholder="Add a step… (Enter to add)" onkeydown="if(event.key==='Enter'){event.preventDefault();subAdd();}">
+      <button class="btn" type="button" onclick="subAdd()">＋</button>
+    </div>
     <label>Allocated to</label><select id="f-who">${assigneeOptions(n.assignee)}</select>
     <label>Column</label>
     <select id="f-col">${cur.cols.map(x=>`<option value="${x.id}" ${x.id===n.column_id?'selected':''}>${esc(x.name)}</option>`).join('')}</select>
@@ -586,7 +596,20 @@ function editNote(id){
       <button class="btn ghost" onclick="closeModal()">Cancel</button>
       <button class="btn orange" onclick="updNote('${id}')">Save changes</button>
     </div>`);
+  renderSubs();
 }
+let _subs=[];
+function renderSubs(){
+  const el=$('f-subs'); if(!el)return;
+  el.innerHTML=_subs.map((s,i)=>`<div style="display:flex;align-items:center;gap:9px;padding:4px 0">
+    <button type="button" class="chk ${s.d?'on':''}" onclick="subToggle(${i})">${s.d?'✔':''}</button>
+    <span style="flex:1;font-size:13.5px;${s.d?'text-decoration:line-through;opacity:.5':''}">${esc(s.t)}</span>
+    <button type="button" style="background:none;color:${C.lava};font-weight:800;font-size:14px" title="Remove" onclick="subDel(${i})">✕</button>
+  </div>`).join('')||'<div style="font-size:12px;color:var(--muted);padding:2px 0">No subtasks yet — break this task into steps below.</div>';
+}
+function subAdd(){const v=$('f-subnew').value.trim();if(!v)return;_subs.push({t:v,d:false});$('f-subnew').value='';renderSubs();}
+function subToggle(i){_subs[i].d=!_subs[i].d;renderSubs();}
+function subDel(i){_subs.splice(i,1);renderSubs();}
 async function updNote(id){
   const n=cur.notes.find(x=>x.id===id); const prevWho=n.assignee;
   const patch={
@@ -595,6 +618,7 @@ async function updNote(id){
     assignee:$('f-who').value||null,
     column_id:$('f-col').value,
     done:$('f-done').value==='1',
+    subtasks:_subs,
   };
   try{
     const {error}=await sb.from('notes').update(patch).eq('id',id); if(error)throw error;
