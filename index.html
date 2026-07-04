@@ -218,15 +218,18 @@ const STANDARD_CATS = [
 ];
 
 const LOGO = `
-<svg width="46" height="40" viewBox="0 0 300 200" xmlns="http://www.w3.org/2000/svg">
- <path d="M232 18 a44 44 0 0 1 22 62 l-30 -28 z" fill="${C.fire}"/>
+<svg width="46" height="40" viewBox="0 0 320 200" xmlns="http://www.w3.org/2000/svg">
+ <circle cx="236" cy="58" r="44" fill="${C.fire}"/>
  <g stroke="${C.ink}" stroke-width="9" stroke-linejoin="round">
-  <polygon points="150,14 96,130 150,130" fill="#D9971E"/>
-  <polygon points="150,14 204,130 150,130" fill="#E8D9BD"/>
-  <polygon points="62,52 22,130 62,130" fill="${C.forest}"/>
-  <polygon points="62,52 102,130 62,130" fill="#B96A3C"/>
-  <polygon points="243,58 205,130 243,130" fill="${C.teal}"/>
-  <polygon points="243,58 281,130 243,130" fill="${C.water}"/>
+  <polygon points="160,16 92,152 228,152" fill="#E8D9BD"/>
+  <polygon points="160,16 126,152 92,152" fill="#D9971E"/>
+  <polygon points="146,44 170,96 128,152 108,152" fill="#F4AF23"/>
+  <polygon points="70,68 18,152 122,152" fill="#B96A3C"/>
+  <polygon points="70,68 42,152 18,152" fill="${C.forest}"/>
+  <polygon points="70,68 96,152 122,152" fill="#8C6A47"/>
+  <polygon points="254,62 202,152 306,152" fill="${C.water}"/>
+  <polygon points="254,62 228,152 202,152" fill="${C.teal}"/>
+  <polygon points="280,107 306,152 254,152" fill="${C.sky}"/>
  </g>
 </svg>`;
 
@@ -350,11 +353,18 @@ function loginView(){
       <h3 style="margin-bottom:16px">Team sign in</h3>
       <div class="login-err" id="login-err"></div>
       <input type="email" id="li-email" placeholder="Email" autocomplete="username">
-      <input type="password" id="li-pw" placeholder="Password" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()">
+      <div style="position:relative">
+        <input type="password" id="li-pw" placeholder="Password" autocomplete="current-password" style="padding-right:46px" onkeydown="if(event.key==='Enter')doLogin()">
+        <button type="button" id="pw-eye" onclick="togglePw()" title="Show password" style="position:absolute;right:13px;top:12px;background:none;font-size:17px">👁</button>
+      </div>
       <button class="btn orange" id="li-go" style="width:100%;padding:12px" onclick="doLogin()">Sign in</button>
       <div style="font-size:11.5px;color:#999;margin-top:14px;font-weight:600">Accounts are created by your team admin.</div>
     </div>
   </div>`;
+}
+function togglePw(){
+  const i=$('li-pw'); i.type = i.type==='password' ? 'text' : 'password';
+  $('pw-eye').textContent = i.type==='password' ? '👁' : '🙈';
 }
 async function doLogin(){
   const b=$('li-go');b.disabled=true;$('login-err').textContent='';
@@ -402,9 +412,9 @@ function newEventModal(){
       <input type="checkbox" id="f-std" style="width:auto"> Start with the 9 standard categories (Venue, Sponsors, Exhibitors…)
     </label>
     <div class="row"><button class="btn ghost" onclick="closeModal()">Cancel</button>
-    <button class="btn orange" onclick="createEvent()">Create board</button></div>`);
+    <button class="btn orange" onclick="createBoard()">Create board</button></div>`);
 }
-async function createEvent(){
+async function createBoard(){
   const name=$('f-name').value.trim(); if(!name)return;
   try{
     const {data,error}=await sb.from('events').insert({name,date_label:$('f-date').value.trim()||'TBC',created_by:ME.id}).select().single();
