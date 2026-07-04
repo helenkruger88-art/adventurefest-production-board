@@ -286,17 +286,18 @@ async function loadCore(){
   if(!EVENTS.find(x=>x.id===S.event)) S.event = EVENTS[0]?.id || null;
 }
 async function loadEvent(){
-  if(!S.event){cur={cols:[],notes:[],files:[],msgs:[],atts:[]};return;}
+  if(!S.event){cur={cols:[],notes:[],files:[],msgs:[],atts:[],invs:[]};return;}
   localStorage.setItem('afsa_event', S.event);
-  const [c,n,f,m,a] = await Promise.all([
+  const [c,n,f,m,a,iv] = await Promise.all([
     sb.from('columns').select('*').eq('event_id',S.event).order('position'),
     sb.from('notes').select('*').eq('event_id',S.event).order('created_at'),
     sb.from('drive_links').select('*').eq('event_id',S.event).order('name'),
     sb.from('messages').select('*').eq('event_id',S.event).order('created_at',{ascending:false}).limit(30),
     sb.from('column_files').select('*').eq('event_id',S.event).order('created_at'),
+    sb.from('invoices').select('*').eq('event_id',S.event).order('created_at'),
   ]);
-  if(c.error)throw c.error; if(n.error)throw n.error; if(f.error)throw f.error; if(m.error)throw m.error; if(a.error)throw a.error;
-  cur={cols:c.data,notes:n.data,files:f.data,msgs:m.data.reverse(),atts:a.data};
+  if(c.error)throw c.error; if(n.error)throw n.error; if(f.error)throw f.error; if(m.error)throw m.error; if(a.error)throw a.error; if(iv.error)throw iv.error;
+  cur={cols:c.data,notes:n.data,files:f.data,msgs:m.data.reverse(),atts:a.data,invs:iv.data};
 }
 async function refresh(){ try{ await loadCore(); await loadEvent(); render(); }catch(e){fail(e);} }
 
@@ -325,7 +326,8 @@ async function loadHomeStats(){
   if(error)throw error;
   const {data:allCols,error:e2}=await sb.from('columns').select('*').order('position');
   if(e2)throw e2;
-  eventStatsCache.notes=data; eventStatsCache.cols=allCols;
+  const {data:allInv}=await sb.from('invoices').select('event_id,kind,amount,paid,due_date');
+  eventStatsCache.notes=data; eventStatsCache.cols=allCols; eventStatsCache.invs=allInv||[];
 }
 
 /* ================= RENDER ================= */
@@ -345,6 +347,7 @@ function render(){
       <button class="${S.view==='my'?'active':''}" onclick="go('my')">🗂 My Board</button>
       <button class="${S.view==='progress'?'active':''}" onclick="go('progress')">📊 Progress</button>
       <button class="${S.view==='ask'?'active':''}" onclick="go('ask')">💬 Ask</button>
+      <button class="${S.view==='money'?'active':''}" onclick="go('money')">💰 Money</button>
       <button class="${S.view==='report'?'active':''}" onclick="go('report')">📄 Report</button>
     </div>
     <div class="nav-right">
@@ -355,7 +358,7 @@ function render(){
       <span onclick="teamModal()">${avatar(ME)}</span>
     </div>
   </nav>
-  <main>${{home:homeView,board:boardView,my:myView,progress:progressView,report:reportView,ask:askView}[S.view]()}</main>`;
+  <main>${{home:homeView,board:boardView,my:myView,progress:progressView,report:reportView,ask:askView,money:moneyView}[S.view]()}</main>`;
 }
 function go(v){
   S.view=v;
@@ -412,6 +415,10 @@ function homeView(){
         <h3>${esc(e.name)}</h3><div class="date">📅 ${esc(e.date_label)} &nbsp;·&nbsp; ${mine} task${mine!==1?'s':''} on your plate</div>
         ${(()=>{const f=notes.filter(nn=>(dueState(nn)||{}).cls&&dueState(nn).cls!=='ok').length;
           return f?`<div style="color:${C.lava};font-weight:800;font-size:12px;margin:-8px 0 10px">⚠ ${f} deadline${f>1?'s':''} need${f>1?'':'s'} attention</div>`:'';})()}
+        ${(()=>{const iv=(eventStatsCache.invs||[]).filter(x=>x.event_id===e.id); if(!iv.length)return '';
+          const s=(a)=>a.reduce((t,x)=>t+Number(x.amount||0),0);
+          const io=iv.filter(x=>!x.paid&&(dueState({due_date:x.due_date,warn_days:7,done:x.paid})||{}).cls==='over').length;
+          return `<div style="font-weight:800;font-size:12px;color:#6d6858;margin:-6px 0 10px">💰 in ${Rand(s(iv.filter(x=>x.kind==='in')))} · out ${Rand(s(iv.filter(x=>x.kind==='out')))}${io?` · <span style="color:${C.lava}">⚠ ${io} overdue</span>`:''}</div>`;})()}
         <div class="big-progress"><i style="width:${s.p}%"></i></div>
         <div class="pct-row"><span>${s.d} of ${s.t} tasks done</span><span>${s.p}%</span></div>
         <div class="minibars">
@@ -835,6 +842,98 @@ function progressView(){
       </div>
     </div>
   </div>`;
+}
+
+/* ---------- MONEY ---------- */
+const Rand=v=>'R'+Number(v||0).toLocaleString('en-ZA',{maximumFractionDigits:0});
+function invDue(i){return dueState({due_date:i.due_date,warn_days:7,done:i.paid});}
+function invChip(i){return dueChip({due_date:i.due_date,warn_days:7,done:i.paid});}
+function moneyView(){
+  const e=evRow(); if(!e)return `<div class="empty-board">Create a board first.</div>`;
+  const inv=cur.invs||[];
+  const out=inv.filter(i=>i.kind==='out'), inn=inv.filter(i=>i.kind==='in');
+  const sum=a=>a.reduce((s,i)=>s+Number(i.amount||0),0);
+  const totExp=sum(out), totInc=sum(inn), net=totInc-totExp;
+  const over=inv.filter(i=>!i.paid&&(invDue(i)||{}).cls==='over').length;
+  const card=(l,v,c)=>`<div class="panel" style="padding:14px 18px"><div style="font-size:11.5px;font-weight:800;text-transform:uppercase;letter-spacing:.6px;color:var(--muted)">${l}</div><div style="font-family:'Archivo Black';font-size:22px;color:${c};margin-top:2px">${v}</div></div>`;
+  const ledger=(title,rows,kind)=>{
+    const outstanding=sum(rows.filter(i=>!i.paid));
+    return `<div class="panel" style="margin-top:18px">
+      <h3>${title} <span style="font-family:Inter;font-size:12px;color:var(--muted);font-weight:700;margin-left:auto">outstanding ${Rand(outstanding)} of ${Rand(sum(rows))}</span></h3>
+      ${rows.length?rows.slice().sort((a,b)=>(a.paid-b.paid)||String(a.due_date||'9999').localeCompare(String(b.due_date||'9999'))).map(i=>`
+        <div style="display:flex;align-items:center;gap:11px;padding:9px 2px;border-bottom:1px solid #F0EADC">
+          <button class="chk ${i.paid?'on':''}" onclick="payInv('${i.id}')" title="${i.paid?'Mark unpaid':'Mark paid'}">${i.paid?'✔':''}</button>
+          <div style="flex:1;min-width:0">
+            <b style="font-size:13.5px;${i.paid?'text-decoration:line-through;opacity:.55':''}">${esc(i.party)}</b>${i.source==='email'?' 📩':''}
+            <div style="font-size:11.5px;color:var(--muted);font-weight:600">${esc(i.descr||'')}${i.file_url?` · <a href="${esc(i.file_url)}" target="_blank" rel="noopener">invoice</a>`:''}${i.paid&&i.paid_at?` · paid ${i.paid_at}`:''}</div>
+          </div>
+          <b style="font-size:13.5px;${i.paid?'opacity:.5':''}">${Rand(i.amount)}</b>
+          ${i.due_date?invChip(i).replace('margin-bottom:8px','margin-bottom:0'):''}
+          ${kind==='in'&&!i.paid&&ME.email_connected?`<button class="claude-chip" onclick="remindInv('${i.id}')">✦ remind</button>`:''}
+          <button style="background:none;color:${C.lava};font-weight:800" title="Delete" onclick="delInv('${i.id}')">✕</button>
+        </div>`).join(''):'<p style="color:var(--muted);font-size:13px">Nothing here yet.</p>'}
+      <button class="btn ghost" style="margin-top:12px" onclick="addInvModal('${kind}')">＋ Add ${kind==='out'?'supplier invoice':'client invoice'}</button>
+    </div>`;
+  };
+  return `<div class="view-title"><h2>💰 Money</h2><span class="sub">${esc(e.name)} · a tracker, not the books</span></div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px;margin-top:16px">
+    ${card('Total income',Rand(totInc),C.forest)}
+    ${card('Total expenses',Rand(totExp),C.lava)}
+    ${card('Net position',(net<0?'−':'')+Rand(Math.abs(net)),net>=0?C.forest:C.lava)}
+    ${card('Overdue',over+' invoice'+(over===1?'':'s'),over?C.fire:'#8A8577')}
+  </div>
+  ${ledger('📤 We owe — suppliers',out,'out')}
+  ${ledger('📥 Owed to us — clients',inn,'in')}`;
+}
+async function payInv(id){
+  const i=(cur.invs||[]).find(x=>x.id===id);
+  try{const {error}=await sb.from('invoices').update({paid:!i.paid,paid_at:!i.paid?new Date().toISOString().slice(0,10):null}).eq('id',id);
+  if(error)throw error; await loadEvent(); render(); if(!i.paid)toast('✔ Marked paid');}catch(e){fail(e);}
+}
+async function delInv(id){
+  if(!confirm('Delete this invoice entry?'))return;
+  try{const {error}=await sb.from('invoices').delete().eq('id',id); if(error)throw error;
+  await loadEvent(); render();}catch(e){fail(e);}
+}
+function addInvModal(kind){
+  openModal(`<h3>＋ ${kind==='out'?'Supplier invoice (we owe)':'Client invoice (owed to us)'}</h3>
+    <label>${kind==='out'?'Supplier':'Client'} name</label><input id="iv-party" placeholder="e.g. ${kind==='out'?'ER24 Medical':'TrailTech Bikes'}">
+    <label>Description</label><input id="iv-descr" placeholder="e.g. ${kind==='out'?'Event medics deposit':'Gold sponsor first tranche'}">
+    <div style="display:flex;gap:12px">
+      <div style="flex:1"><label>Amount (R)</label><input id="iv-amount" type="number" min="0" step="0.01"></div>
+      <div style="flex:1"><label>Due date</label><input id="iv-due" type="date"></div>
+    </div>
+    <label>Invoice file (optional, PDF)</label><input id="iv-file" type="file">
+    <div class="row"><button class="btn ghost" onclick="closeModal()">Cancel</button>
+    <button class="btn orange" id="iv-go" onclick="saveInv('${kind}')">Add invoice</button></div>`);
+}
+async function saveInv(kind){
+  const party=$('iv-party').value.trim(), amount=parseFloat($('iv-amount').value);
+  if(!party||isNaN(amount)){toast('Name and amount are required');return;}
+  const b=$('iv-go');b.disabled=true;
+  try{
+    let file_url=null, file_path=null;
+    const f=$('iv-file').files[0];
+    if(f&&f.size<=15*1024*1024){
+      file_path=S.event+'/invoices/'+Date.now()+'_'+f.name.replace(/[^\w.\-]+/g,'_');
+      const {error:e1}=await sb.storage.from('attachments').upload(file_path,f); if(e1)throw e1;
+      file_url=sb.storage.from('attachments').getPublicUrl(file_path).data.publicUrl;
+    }
+    const {error}=await sb.from('invoices').insert({event_id:S.event,kind,party,descr:$('iv-descr').value.trim(),amount,due_date:$('iv-due').value||null,file_url,file_path});
+    if(error)throw error;
+    closeModal(); await loadEvent(); render(); toast('💰 Invoice added');
+  }catch(e){fail(e);b.disabled=false;}
+}
+function remindInv(id){
+  const i=(cur.invs||[]).find(x=>x.id===id);
+  lastClaudeText=`Hi ${i.party} team,\n\nJust a friendly reminder that our invoice for "${i.descr||'services'}" (${Rand(i.amount)}) ${i.due_date?`falls due on ${i.due_date}`:'is now due'}. Please let us know once payment is on its way, or if you need the invoice re-sent.\n\nWith thanks,\n${ME.name}\n${evRow().name}`;
+  openModal(`<h3>📧 Payment reminder · <span style="font-weight:400;font-size:14px">from ${esc(ME.email)}</span></h3>
+    <label>To</label><input id="ml-to" type="email" placeholder="accounts@client.co.za">
+    <label>Subject</label><input id="ml-subj" value="Payment reminder — ${esc(i.descr||i.party)} (${Rand(i.amount)})">
+    <label>Message (edit before sending)</label>
+    <textarea id="ml-body" rows="9" style="font-size:13px">${esc(lastClaudeText)}</textarea>
+    <div class="row"><button class="btn ghost" onclick="closeModal()">Cancel</button>
+    <button class="btn orange" id="ml-go" onclick="sendEmailNow(null)">📧 Send reminder</button></div>`);
 }
 
 /* ---------- ASK ---------- */
