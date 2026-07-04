@@ -286,16 +286,17 @@ async function loadCore(){
   if(!EVENTS.find(x=>x.id===S.event)) S.event = EVENTS[0]?.id || null;
 }
 async function loadEvent(){
-  if(!S.event){cur={cols:[],notes:[],files:[],msgs:[]};return;}
+  if(!S.event){cur={cols:[],notes:[],files:[],msgs:[],atts:[]};return;}
   localStorage.setItem('afsa_event', S.event);
-  const [c,n,f,m] = await Promise.all([
+  const [c,n,f,m,a] = await Promise.all([
     sb.from('columns').select('*').eq('event_id',S.event).order('position'),
     sb.from('notes').select('*').eq('event_id',S.event).order('created_at'),
     sb.from('drive_links').select('*').eq('event_id',S.event).order('name'),
     sb.from('messages').select('*').eq('event_id',S.event).order('created_at',{ascending:false}).limit(30),
+    sb.from('column_files').select('*').eq('event_id',S.event).order('created_at'),
   ]);
-  if(c.error)throw c.error; if(n.error)throw n.error; if(f.error)throw f.error; if(m.error)throw m.error;
-  cur={cols:c.data,notes:n.data,files:f.data,msgs:m.data.reverse()};
+  if(c.error)throw c.error; if(n.error)throw n.error; if(f.error)throw f.error; if(m.error)throw m.error; if(a.error)throw a.error;
+  cur={cols:c.data,notes:n.data,files:f.data,msgs:m.data.reverse(),atts:a.data};
 }
 async function refresh(){ try{ await loadCore(); await loadEvent(); render(); }catch(e){fail(e);} }
 
@@ -496,6 +497,13 @@ function railBoard(){
         <button title="Delete" onclick="delCol('${c.id}')">✕</button>
       </div>
       <div class="col-prog" style="margin:12px 16px 0"><i style="width:${cs.p}%;background:${c.color}"></i></div>
+      <div class="files-row" style="margin:12px 16px 0">
+        ${(cur.atts||[]).filter(a=>a.column_id===c.id).map(a=>
+          `<span class="file-chip"><a href="${esc(a.url)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none">📄 ${esc(a.name)}</a>
+           <button style="background:none;color:${C.lava};font-weight:800;padding:0 0 0 2px" title="Remove" onclick="delAttachment('${a.id}','${esc(a.path)}')">✕</button></span>`).join('')}
+        <span class="file-chip" style="border-style:dashed;color:var(--muted)" onclick="document.getElementById('att-in').click()">📎 Attach file</span>
+        <input type="file" id="att-in" style="display:none" onchange="uploadAttachment(this,'${c.id}')">
+      </div>
       <div class="notes-grid">
         ${notes.map(n=>{const u=usr(n.assignee);
           const st=n.subtasks||[]; const sd=st.filter(s=>s.d).length;
@@ -571,6 +579,28 @@ async function linkDrive(){
   const url=prompt('Paste the Google Drive share link:')||'';
   try{const {error}=await sb.from('drive_links').insert({event_id:S.event,name:name.trim(),url:url.trim()});
   if(error)throw error; await loadEvent(); render(); toast('📁 Drive folder linked to this board');}catch(e){fail(e);}
+}
+
+async function uploadAttachment(input,colId){
+  const file=input.files[0]; if(!file)return; input.value='';
+  if(file.size>15*1024*1024){toast('Max file size is 15 MB');return;}
+  toast('⬆️ Uploading '+esc(file.name)+'…');
+  try{
+    const path=S.event+'/'+colId+'/'+Date.now()+'_'+file.name.replace(/[^\w.\-]+/g,'_');
+    const {error}=await sb.storage.from('attachments').upload(path,file); if(error)throw error;
+    const {data}=sb.storage.from('attachments').getPublicUrl(path);
+    const {error:e2}=await sb.from('column_files').insert({event_id:S.event,column_id:colId,name:file.name,path,url:data.publicUrl});
+    if(e2)throw e2;
+    await loadEvent(); render(); toast('📄 '+esc(file.name)+' attached — click it anytime to open');
+  }catch(e){fail(e);}
+}
+async function delAttachment(id,path){
+  if(!confirm('Remove this file from the category?'))return;
+  try{
+    await sb.storage.from('attachments').remove([path]);
+    const {error}=await sb.from('column_files').delete().eq('id',id); if(error)throw error;
+    await loadEvent(); render();
+  }catch(e){fail(e);}
 }
 
 /* ---------- NOTES ---------- */
