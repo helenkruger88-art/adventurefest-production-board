@@ -302,6 +302,7 @@ async function loadEvent(){
   ]);
   if(c.error)throw c.error; if(n.error)throw n.error; if(f.error)throw f.error; if(m.error)throw m.error; if(a.error)throw a.error; if(iv.error)throw iv.error; if(pn.error)throw pn.error;
   cur={cols:c.data,notes:n.data,files:f.data,msgs:m.data.reverse(),atts:a.data,invs:iv.data,pins:pn.data};
+  await signFiles();
 }
 async function refresh(){ try{ await loadCore(); await loadEvent(); render(); }catch(e){fail(e);} }
 
@@ -559,7 +560,7 @@ function railBoard(){
           const st=n.subtasks||[]; const sd=st.filter(s=>s.d).length;
           const shortDesc=n.description&&n.description.length>170?n.description.slice(0,170)+'…':n.description;
           return `<div class="note ${n.done?'done':''}" style="--note-c:${c.color};--note-bg:${tint(c.color,13)}" draggable="true" ondragstart="dragNote(event,'${n.id}')" ondragend="document.body.classList.remove('drag-note')" ondragover="event.preventDefault()" ondrop="dropOnNote(event,'${n.id}')" onclick="editNote('${n.id}')" title="Click to open & edit · drag onto another note to reorder · drag onto a category on the left to move">
-            <h4>${esc(n.title)}</h4>${dueChip(n)}<p>${esc(shortDesc)}</p>
+            <h4>${esc(n.title)}</h4>${dueChip(n)}${(()=>{const na=(cur.atts||[]).filter(a=>a.note_id===n.id).length;return na?`<span style="display:inline-block;font-size:10.5px;font-weight:800;color:#6d6858;background:rgba(0,0,0,.06);border-radius:8px;padding:1px 7px;margin-bottom:5px">📎 ${na} file${na>1?'s':''}</span>`:'';})()}<p>${esc(shortDesc)}</p>
             ${st.length?`<div style="margin-bottom:8px">
               ${st.map((s,i)=>`<div style="display:flex;gap:7px;align-items:center;padding:2px 0">
                 <button class="chk ${s.d?'on':''}" style="width:16px;height:16px;font-size:10px;border-radius:5px" onclick="event.stopPropagation();cardSubToggle('${n.id}',${i})">${s.d?'✔':''}</button>
@@ -687,6 +688,21 @@ async function delDrive(id){
   try{const {error}=await sb.from('drive_links').delete().eq('id',id); if(error)throw error;
   await loadEvent(); render(); toast('Folder link removed');}catch(e){fail(e);}
 }
+/* Files live in a private bucket — links are signed per session, signed-in team only */
+async function signFiles(){
+  try{
+    const paths=[...(cur.atts||[]).map(a=>a.path),...(cur.invs||[]).map(v=>v.file_path)].filter(Boolean);
+    if(!paths.length)return;
+    const {data,error}=await sb.storage.from('attachments').createSignedUrls(paths,60*60*12);
+    if(error||!data)return;
+    const m={}; data.forEach(s=>{if(s.signedUrl)m[s.path]=s.signedUrl;});
+    (cur.atts||[]).forEach(a=>{if(a.path&&m[a.path])a.url=m[a.path];});
+    (cur.invs||[]).forEach(v=>{if(v.file_path&&m[v.file_path])v.file_url=m[v.file_path];});
+  }catch(_){/* links just stay as stored */}
+}
+async function signPath(p){
+  try{const {data}=await sb.storage.from('attachments').createSignedUrl(p,60*60*12);return data?.signedUrl||'';}catch(_){return '';}
+}
 async function uploadAttachment(input,colId){
   const file=input.files[0]; if(!file)return; input.value='';
   if(file.size>15*1024*1024){toast('Max file size is 15 MB');return;}
@@ -694,10 +710,40 @@ async function uploadAttachment(input,colId){
   try{
     const path=S.event+'/'+colId+'/'+Date.now()+'_'+file.name.replace(/[^\w.\-]+/g,'_');
     const {error}=await sb.storage.from('attachments').upload(path,file); if(error)throw error;
-    const {data}=sb.storage.from('attachments').getPublicUrl(path);
-    const {error:e2}=await sb.from('column_files').insert({event_id:S.event,column_id:colId,name:file.name,path,url:data.publicUrl});
+    const {error:e2}=await sb.from('column_files').insert({event_id:S.event,column_id:colId,name:file.name,path,url:''});
     if(e2)throw e2;
     await loadEvent(); render(); toast('📄 '+esc(file.name)+' attached — click it anytime to open');
+  }catch(e){fail(e);}
+}
+function noteAttsHtml(noteId){
+  const list=(cur.atts||[]).filter(a=>a.note_id===noteId);
+  return list.map(a=>`<div style="display:flex;align-items:center;gap:8px;padding:4px 2px">
+    <a href="${esc(a.url)}" target="_blank" rel="noopener" style="flex:1;font-size:13px;font-weight:600;color:var(--ink);text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📄 ${esc(a.name)}</a>
+    <button type="button" style="background:none;color:${C.lava};font-weight:800" title="Remove" onclick="delNoteAtt('${a.id}','${esc(a.path)}','${noteId}')">✕</button>
+  </div>`).join('')||'<div style="font-size:12px;color:var(--muted)">No files on this task yet.</div>';
+}
+async function uploadNoteAtt(input,colId,noteId){
+  const file=input.files[0]; if(!file)return; input.value='';
+  if(file.size>15*1024*1024){toast('Max file size is 15 MB');return;}
+  toast('⬆️ Uploading '+esc(file.name)+'…');
+  try{
+    const path=S.event+'/'+colId+'/'+Date.now()+'_'+file.name.replace(/[^\w.\-]+/g,'_');
+    const {error}=await sb.storage.from('attachments').upload(path,file); if(error)throw error;
+    const {data:row,error:e2}=await sb.from('column_files').insert({event_id:S.event,column_id:colId,note_id:noteId,name:file.name,path,url:''}).select().single();
+    if(e2)throw e2;
+    row.url=await signPath(path);
+    cur.atts.push(row);
+    const el=$('f-atts'); if(el)el.innerHTML=noteAttsHtml(noteId);
+    toast('📄 '+esc(file.name)+' attached to this task');
+  }catch(e){fail(e);}
+}
+async function delNoteAtt(id,path,noteId){
+  if(!confirm('Remove this file from the task?'))return;
+  try{
+    await sb.storage.from('attachments').remove([path]);
+    const {error}=await sb.from('column_files').delete().eq('id',id); if(error)throw error;
+    cur.atts=cur.atts.filter(a=>a.id!==id);
+    const el=$('f-atts'); if(el)el.innerHTML=noteAttsHtml(noteId);
   }catch(e){fail(e);}
 }
 async function delAttachment(id,path){
@@ -760,6 +806,12 @@ function editNote(id){
     <div style="display:flex;gap:8px;margin-top:4px">
       <input id="f-subnew" placeholder="Add a step… (Enter to add)" onkeydown="if(event.key==='Enter'){event.preventDefault();subAdd();}">
       <button class="btn" type="button" onclick="subAdd()">＋</button>
+    </div>
+    <label>Files on this task</label>
+    <div id="f-atts">${noteAttsHtml(id)}</div>
+    <div style="margin-top:4px">
+      <button class="btn ghost" type="button" style="font-size:12px" onclick="document.getElementById('natt-in').click()">📎 Attach a file to this task</button>
+      <input type="file" id="natt-in" style="display:none" onchange="uploadNoteAtt(this,'${n.column_id}','${id}')">
     </div>
     <div style="display:flex;gap:12px">
       <div style="flex:1"><label>Deadline</label><input type="date" id="f-due" value="${n.due_date||''}"></div>
@@ -1044,7 +1096,7 @@ async function saveInv(kind){
     if(f&&f.size<=15*1024*1024){
       file_path=S.event+'/invoices/'+Date.now()+'_'+f.name.replace(/[^\w.\-]+/g,'_');
       const {error:e1}=await sb.storage.from('attachments').upload(file_path,f); if(e1)throw e1;
-      file_url=sb.storage.from('attachments').getPublicUrl(file_path).data.publicUrl;
+      file_url='';
     }
     const {error}=await sb.from('invoices').insert({event_id:S.event,kind,party,descr:$('iv-descr').value.trim(),amount,due_date:$('iv-due').value||null,file_url,file_path});
     if(error)throw error;
@@ -1074,7 +1126,7 @@ function askView(){
       ${ASKLOG.map(m=>`<div style="display:flex;gap:11px;padding:12px 0;border-bottom:1px solid #F0EADC" data-role="${m.role}">
         <div style="width:30px;height:30px;border-radius:8px;flex:none;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:12px;background:${m.role==='user'?ME.color:C.ink}">${m.role==='user'?ME.initials:'✦'}</div>
         <div style="flex:1;font-size:14px;line-height:1.6;white-space:pre-wrap">${esc(m.text)}
-          ${(m.files||[]).length?'<div style="margin-top:8px">'+m.files.map(f=>`<a class="file-chip" href="${esc(f.url)}" target="_blank" rel="noopener" style="text-decoration:none">📄 ${esc(f.name)}</a>`).join(' ')+'</div>':''}
+          ${(m.files||[]).length?'<div style="margin-top:8px">'+m.files.map(f=>f.url?`<a class="file-chip" href="${esc(f.url)}" target="_blank" rel="noopener" style="text-decoration:none">📄 ${esc(f.name)}</a>`:`<span class="file-chip">📄 ${esc(f.name)}</span>`).join(' ')+'</div>':''}
         </div>
       </div>`).join('')||'<p style="color:var(--muted);font-weight:600;padding:6px 0">Ask anything about this event — costs, contacts, deadlines, outstanding items. Attach PDFs to categories to teach it more.</p>'}
     </div>
