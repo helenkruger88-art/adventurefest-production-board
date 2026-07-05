@@ -983,10 +983,10 @@ let ASKLOG=[];
 function askView(){
   const e=evRow();
   return `<div class="view-title"><h2>💬 Ask the board</h2>
-    <span class="sub">${e?esc(e.name):''} · answers come only from this board's notes and attached files</span></div>
+    <span class="sub">${e?esc(e.name):''} · answers from your board, your documents, and live web research</span></div>
   <div class="panel" style="max-width:880px;margin-top:16px">
     <div id="ask-log">
-      ${ASKLOG.map(m=>`<div style="display:flex;gap:11px;padding:12px 0;border-bottom:1px solid #F0EADC">
+      ${ASKLOG.map(m=>`<div style="display:flex;gap:11px;padding:12px 0;border-bottom:1px solid #F0EADC" data-role="${m.role}">
         <div style="width:30px;height:30px;border-radius:8px;flex:none;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:12px;background:${m.role==='user'?ME.color:C.ink}">${m.role==='user'?ME.initials:'✦'}</div>
         <div style="flex:1;font-size:14px;line-height:1.6;white-space:pre-wrap">${esc(m.text)}
           ${(m.files||[]).length?'<div style="margin-top:8px">'+m.files.map(f=>`<a class="file-chip" href="${esc(f.url)}" target="_blank" rel="noopener" style="text-decoration:none">📄 ${esc(f.name)}</a>`).join(' ')+'</div>':''}
