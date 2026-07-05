@@ -521,7 +521,7 @@ function railBoard(){
   if(!cur.cols.find(c=>c.id===S.col)) S.col = cur.cols[0].id;
   const c=cur.cols.find(x=>x.id===S.col);
   const cs=statsFor(cur.notes,c.id);
-  const notes=cur.notes.filter(n=>n.column_id===c.id).sort((a,b)=>a.done-b.done);
+  const notes=cur.notes.filter(n=>n.column_id===c.id).sort(noteSort);
   return `<div class="board-wrap">
     <div class="rail">
       ${cur.cols.map(x=>{const xs=statsFor(cur.notes,x.id);
@@ -558,7 +558,7 @@ function railBoard(){
         ${notes.map(n=>{const u=usr(n.assignee);
           const st=n.subtasks||[]; const sd=st.filter(s=>s.d).length;
           const shortDesc=n.description&&n.description.length>170?n.description.slice(0,170)+'…':n.description;
-          return `<div class="note ${n.done?'done':''}" style="--note-c:${c.color};--note-bg:${tint(c.color,13)}" draggable="true" ondragstart="dragNote(event,'${n.id}')" ondragend="document.body.classList.remove('drag-note')" onclick="editNote('${n.id}')" title="Click to open & edit · drag onto a category on the left to move">
+          return `<div class="note ${n.done?'done':''}" style="--note-c:${c.color};--note-bg:${tint(c.color,13)}" draggable="true" ondragstart="dragNote(event,'${n.id}')" ondragend="document.body.classList.remove('drag-note')" ondragover="event.preventDefault()" ondrop="dropOnNote(event,'${n.id}')" onclick="editNote('${n.id}')" title="Click to open & edit · drag onto another note to reorder · drag onto a category on the left to move">
             <h4>${esc(n.title)}</h4>${dueChip(n)}<p>${esc(shortDesc)}</p>
             ${st.length?`<div style="margin-bottom:8px">
               ${st.map((s,i)=>`<div style="display:flex;gap:7px;align-items:center;padding:2px 0">
@@ -614,6 +614,31 @@ async function delCol(id){
   try{const {error}=await sb.from('columns').delete().eq('id',id); if(error)throw error;
   await loadEvent(); render();}catch(e){fail(e);}
 }
+const noteSort=(a,b)=>a.done-b.done||(a.position??0)-(b.position??0)||(a.created_at<b.created_at?-1:1);
+async function dropOnNote(ev,targetId){
+  ev.stopPropagation(); ev.preventDefault();
+  document.body.classList.remove('drag-note');
+  if(!_dragNote)return;
+  const id=_dragNote; _dragNote=null;
+  if(id===targetId)return;
+  const n=cur.notes.find(x=>x.id===id); const t=cur.notes.find(x=>x.id===targetId);
+  if(!n||!t)return;
+  const colId=t.column_id; const movedCol=n.column_id!==colId;
+  const list=cur.notes.filter(x=>x.column_id===colId&&x.id!==id).sort(noteSort);
+  list.splice(list.findIndex(x=>x.id===targetId),0,n);
+  n.column_id=colId;
+  const updates=[];
+  list.forEach((x,i)=>{if((x.position??0)!==i||x.id===id){x.position=i;updates.push(x.id);}});
+  render();
+  try{
+    for(const uid of updates){
+      const x=cur.notes.find(z=>z.id===uid);
+      const {error}=await sb.from('notes').update(uid===id?{position:x.position,column_id:colId}:{position:x.position}).eq('id',uid);
+      if(error)throw error;
+    }
+    if(movedCol)toast(`📌 Moved to ${esc(cur.cols.find(c=>c.id===colId)?.name||'')}`);
+  }catch(e){fail(e); await loadEvent(); render();}
+}
 let _dragCol=null, _dragNote=null;
 function dragCol(id){_dragCol=id;_dragNote=null;}
 function dragNote(ev,id){ev.stopPropagation();try{ev.dataTransfer.setData('text/plain',id);ev.dataTransfer.effectAllowed='move';}catch(_){}_dragNote=id;_dragCol=null;document.body.classList.add('drag-note');}
@@ -623,8 +648,9 @@ async function dropOnCol(targetId){
     const n=cur.notes.find(x=>x.id===id);
     if(!n||n.column_id===targetId)return;
     const cName=cur.cols.find(c=>c.id===targetId)?.name||'';
+    const endPos=cur.notes.filter(x=>x.column_id===targetId).length;
     try{
-      const {error}=await sb.from('notes').update({column_id:targetId}).eq('id',id); if(error)throw error;
+      const {error}=await sb.from('notes').update({column_id:targetId,position:endPos}).eq('id',id); if(error)throw error;
       await loadEvent(); render(); toast(`📌 Moved to ${esc(cName)}`);
     }catch(e){fail(e);}
     return;
@@ -705,7 +731,7 @@ async function saveNote(colId){
   const t=$('f-title').value.trim(); if(!t)return;
   const who=$('f-who').value||null;
   try{
-    const {error}=await sb.from('notes').insert({event_id:S.event,column_id:colId,title:t,description:$('f-desc').value.trim(),assignee:who,created_by:ME.id,due_date:$('f-due').value||null,warn_days:readWarn()});
+    const {error}=await sb.from('notes').insert({event_id:S.event,column_id:colId,title:t,description:$('f-desc').value.trim(),assignee:who,created_by:ME.id,due_date:$('f-due').value||null,warn_days:readWarn(),position:cur.notes.filter(x=>x.column_id===colId).length});
     if(error)throw error;
     await notify(who,`${ME.name.split(' ')[0]} assigned you: ${t}`);
     closeModal(); await loadEvent(); render();
