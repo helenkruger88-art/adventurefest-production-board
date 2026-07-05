@@ -86,6 +86,9 @@ main{padding:26px 26px 70px;max-width:1500px;margin:0 auto}
 .col.drag-over{outline:3px dashed var(--fire);outline-offset:3px}
 .files-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px}
 .file-chip{background:#fff;border:2px solid #E6DFCE;border-radius:20px;padding:6px 13px;font-size:12px;font-weight:700;color:var(--ink);display:inline-flex;gap:6px;align-items:center;cursor:pointer;text-decoration:none}
+summary.file-chip{list-style:none}
+summary.file-chip::-webkit-details-marker{display:none}
+body.drag-note .rcol{outline:2px dashed rgba(255,255,255,.95);outline-offset:-5px;transform:scale(1.02)}
 .file-chip:hover{border-color:var(--stone);background:#FBF7EE}
 .col-body{padding:12px 12px 2px;display:flex;flex-direction:column;gap:11px;min-height:60px}
 .col-prog{margin:10px 12px 0;background:#EBE4D4;height:7px;border-radius:6px;overflow:hidden}
@@ -286,18 +289,19 @@ async function loadCore(){
   if(!EVENTS.find(x=>x.id===S.event)) S.event = EVENTS[0]?.id || null;
 }
 async function loadEvent(){
-  if(!S.event){cur={cols:[],notes:[],files:[],msgs:[],atts:[],invs:[]};return;}
+  if(!S.event){cur={cols:[],notes:[],files:[],msgs:[],atts:[],invs:[],pins:[]};return;}
   localStorage.setItem('afsa_event', S.event);
-  const [c,n,f,m,a,iv] = await Promise.all([
+  const [c,n,f,m,a,iv,pn] = await Promise.all([
     sb.from('columns').select('*').eq('event_id',S.event).order('position'),
     sb.from('notes').select('*').eq('event_id',S.event).order('created_at'),
     sb.from('drive_links').select('*').eq('event_id',S.event).order('name'),
     sb.from('messages').select('*').eq('event_id',S.event).order('created_at',{ascending:false}).limit(30),
     sb.from('column_files').select('*').eq('event_id',S.event).order('created_at'),
     sb.from('invoices').select('*').eq('event_id',S.event).order('created_at'),
+    sb.from('pins').select('*').eq('event_id',S.event).order('created_at'),
   ]);
-  if(c.error)throw c.error; if(n.error)throw n.error; if(f.error)throw f.error; if(m.error)throw m.error; if(a.error)throw a.error; if(iv.error)throw iv.error;
-  cur={cols:c.data,notes:n.data,files:f.data,msgs:m.data.reverse(),atts:a.data,invs:iv.data};
+  if(c.error)throw c.error; if(n.error)throw n.error; if(f.error)throw f.error; if(m.error)throw m.error; if(a.error)throw a.error; if(iv.error)throw iv.error; if(pn.error)throw pn.error;
+  cur={cols:c.data,notes:n.data,files:f.data,msgs:m.data.reverse(),atts:a.data,invs:iv.data,pins:pn.data};
 }
 async function refresh(){ try{ await loadCore(); await loadEvent(); render(); }catch(e){fail(e);} }
 
@@ -502,6 +506,12 @@ function boardView(){
       :`<span onclick="toast('No link saved for this folder yet')">🗂 ${esc(f.name)}</span>`}
       <button style="background:none;color:${C.lava};font-weight:800;padding:0 0 0 4px" title="Remove folder link" onclick="delDrive('${f.id}')">✕</button></span>`).join('')}
     <span class="file-chip" style="border-style:dashed;color:var(--muted)" onclick="linkDrive()">＋ Link Drive folder</span>
+    <span style="width:14px"></span>
+    <span style="font-size:12px;font-weight:800;color:var(--muted)">📌 PINNED</span>
+    ${(cur.pins||[]).map(p=>`<span class="file-chip" style="border-color:#D9C79A;background:#FBF6E8">
+      <a href="${esc(p.url)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none">🔗 ${esc(p.name)}</a>
+      <button style="background:none;color:${C.lava};font-weight:800;padding:0 0 0 4px" title="Unpin" onclick="delPin('${p.id}')">✕</button></span>`).join('')}
+    <span class="file-chip" style="border-style:dashed;color:var(--muted)" onclick="addPin()">＋ Pin a website</span>
   </div>
   ${railBoard()}`;
 }
@@ -530,18 +540,25 @@ function railBoard(){
         <button title="Delete" onclick="delCol('${c.id}')">✕</button>
       </div>
       <div class="col-prog" style="margin:12px 16px 0"><i style="width:${cs.p}%;background:${c.color}"></i></div>
-      <div class="files-row" style="margin:12px 16px 0">
-        ${(cur.atts||[]).filter(a=>a.column_id===c.id).map(a=>
-          `<span class="file-chip"><a href="${esc(a.url)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none">📄 ${esc(a.name)}</a>
-           <button style="background:none;color:${C.lava};font-weight:800;padding:0 0 0 2px" title="Remove" onclick="delAttachment('${a.id}','${esc(a.path)}')">✕</button></span>`).join('')}
-        <span class="file-chip" style="border-style:dashed;color:var(--muted)" onclick="document.getElementById('att-in').click()">📎 Attach file</span>
-        <input type="file" id="att-in" style="display:none" onchange="uploadAttachment(this,'${c.id}')">
+      <div style="margin:12px 16px 0;display:flex;gap:8px;align-items:center">
+        ${(()=>{const fs=(cur.atts||[]).filter(a=>a.column_id===c.id);
+          return `<details style="position:relative">
+            <summary class="file-chip" style="list-style:none;user-select:none">📎 Files (${fs.length}) ▾</summary>
+            <div style="position:absolute;top:calc(100% + 6px);left:0;background:#fff;border:1px solid #E0D8C4;border-radius:12px;box-shadow:0 10px 30px rgba(43,45,58,.18);padding:10px;z-index:40;min-width:280px;max-width:360px">
+              ${fs.map(a=>`<div style="display:flex;align-items:center;gap:8px;padding:5px 4px;border-bottom:1px solid #F0EADC">
+                <a href="${esc(a.url)}" target="_blank" rel="noopener" style="flex:1;font-size:13px;font-weight:600;color:var(--ink);text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📄 ${esc(a.name)}</a>
+                <button style="background:none;color:${C.lava};font-weight:800" title="Remove" onclick="delAttachment('${a.id}','${esc(a.path)}')">✕</button>
+              </div>`).join('')||'<div style="font-size:12.5px;color:var(--muted);padding:4px">No files on this category yet.</div>'}
+              <button class="btn ghost" style="width:100%;margin-top:8px;font-size:12px" onclick="document.getElementById('att-in').click()">📎 Attach a file</button>
+            </div>
+          </details>
+          <input type="file" id="att-in" style="display:none" onchange="uploadAttachment(this,'${c.id}')">`;})()}
       </div>
       <div class="notes-grid">
         ${notes.map(n=>{const u=usr(n.assignee);
           const st=n.subtasks||[]; const sd=st.filter(s=>s.d).length;
           const shortDesc=n.description&&n.description.length>170?n.description.slice(0,170)+'…':n.description;
-          return `<div class="note ${n.done?'done':''}" style="--note-c:${c.color};--note-bg:${tint(c.color,13)}" draggable="true" ondragstart="dragNote(event,'${n.id}')" onclick="editNote('${n.id}')" title="Click to open & edit · drag onto a category on the left to move">
+          return `<div class="note ${n.done?'done':''}" style="--note-c:${c.color};--note-bg:${tint(c.color,13)}" draggable="true" ondragstart="dragNote(event,'${n.id}')" ondragend="document.body.classList.remove('drag-note')" onclick="editNote('${n.id}')" title="Click to open & edit · drag onto a category on the left to move">
             <h4>${esc(n.title)}</h4>${dueChip(n)}<p>${esc(shortDesc)}</p>
             ${st.length?`<div style="margin-bottom:8px">
               ${st.map((s,i)=>`<div style="display:flex;gap:7px;align-items:center;padding:2px 0">
@@ -599,7 +616,7 @@ async function delCol(id){
 }
 let _dragCol=null, _dragNote=null;
 function dragCol(id){_dragCol=id;_dragNote=null;}
-function dragNote(ev,id){ev.stopPropagation();_dragNote=id;_dragCol=null;}
+function dragNote(ev,id){ev.stopPropagation();try{ev.dataTransfer.setData('text/plain',id);ev.dataTransfer.effectAllowed='move';}catch(_){}_dragNote=id;_dragCol=null;document.body.classList.add('drag-note');}
 async function dropOnCol(targetId){
   if(_dragNote){
     const id=_dragNote; _dragNote=null;
@@ -626,6 +643,18 @@ async function linkDrive(){
   if(error)throw error; await loadEvent(); render(); toast('📁 Drive folder linked to this board');}catch(e){fail(e);}
 }
 
+async function addPin(){
+  const name=prompt('Name for this pin (e.g. WC Collaborator portal)?'); if(!name)return;
+  let url=prompt('Website address:')||''; if(!url)return;
+  if(!/^https?:\/\//i.test(url))url='https://'+url;
+  try{const {error}=await sb.from('pins').insert({event_id:S.event,name:name.trim(),url:url.trim()});
+  if(error)throw error; await loadEvent(); render(); toast('📌 Pinned for the whole team');}catch(e){fail(e);}
+}
+async function delPin(id){
+  if(!confirm('Unpin this website?'))return;
+  try{const {error}=await sb.from('pins').delete().eq('id',id); if(error)throw error;
+  await loadEvent(); render();}catch(e){fail(e);}
+}
 async function delDrive(id){
   if(!confirm('Remove this Drive folder link from the board?'))return;
   try{const {error}=await sb.from('drive_links').delete().eq('id',id); if(error)throw error;
@@ -762,13 +791,15 @@ async function notify(userId,body){
   if(error)console.error(error);
 }
 
-/* ---------- ASK CLAUDE ---------- */
+/* ---------- ASK CLAUDE (chat) ---------- */
+let _clLog=[];
 function askClaude(id){
   const n=cur.notes.find(x=>x.id===id);
+  _clLog=[]; lastClaudeText='';
   openModal(`<h3>✦ Ask Claude · <span style="font-weight:400;font-size:14px">${esc(n.title)}</span></h3>
-    <label>Your brief — Claude knows this task, its category and your event</label>
-    <textarea id="cl-q" rows="3" placeholder="e.g. Draft the sponsor follow-up email for this task…"></textarea>
-    <div class="claude-resp" id="cl-r" style="display:none;white-space:pre-wrap;max-height:45vh;overflow-y:auto"></div>
+    <div id="cl-r" style="display:none;max-height:44vh;overflow-y:auto;margin:6px 0"></div>
+    <label id="cl-lbl">Your brief — Claude knows this task, its category and your event. You can keep chatting after each answer.</label>
+    <textarea id="cl-q" rows="3" placeholder="e.g. Draft the sponsor follow-up email for this task…" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();runClaude('${id}');}"></textarea>
     <div class="row">
       <button class="btn ghost" onclick="closeModal()">Close</button>
       <button class="btn" id="cl-mail" style="display:none" onclick="mailClaude('${id}')">📧 Send as email</button>
@@ -776,29 +807,43 @@ function askClaude(id){
       <button class="btn orange" id="cl-go" onclick="runClaude('${id}')">✦ Ask Claude</button>
     </div>`);
 }
+function clRender(thinking){
+  const r=$('cl-r'); if(!r)return;
+  r.style.display=(_clLog.length||thinking)?'block':'none';
+  r.innerHTML=_clLog.map(m=>m.role==='user'
+    ?`<div style="background:#EFE9DA;border-radius:12px 12px 3px 12px;padding:9px 12px;margin:8px 0 8px 40px;font-size:13.5px;white-space:pre-wrap">${esc(m.content)}</div>`
+    :`<div class="claude-resp" style="white-space:pre-wrap;margin:8px 40px 8px 0">${esc(m.content)}</div>`).join('')
+    +(thinking?'<div style="color:var(--muted);font-size:13px;padding:6px 2px">✦ Claude is thinking…</div>':'');
+  r.scrollTop=r.scrollHeight;
+}
 let lastClaudeText='';
 async function runClaude(id){
   const q=$('cl-q').value.trim(); if(!q){toast('Type a brief first');return;}
-  const r=$('cl-r'); r.style.display='block'; r.textContent='✦ Claude is thinking…';
+  const history=_clLog.map(m=>({role:m.role,content:m.content}));
+  _clLog.push({role:'user',content:q}); $('cl-q').value=''; clRender(true);
   const b=$('cl-go'); b.disabled=true;
   try{
     const {data:{session}}=await sb.auth.getSession();
     const res=await fetch(`${SUPABASE_URL}/functions/v1/ask-claude`,{
       method:'POST',
       headers:{'Content-Type':'application/json','apikey':SUPABASE_KEY,'Authorization':`Bearer ${session.access_token}`},
-      body:JSON.stringify({note_id:id,brief:q}),
+      body:JSON.stringify({note_id:id,brief:q,history}),
     });
     const j=await res.json();
     if(j.error==='NOT_CONNECTED'){
-      r.textContent="✦ Claude isn't connected yet — the API key still needs to be added in Supabase. Your brief is still here; try again once it's connected.";
-      b.disabled=false; return;
+      _clLog.pop(); $('cl-q').value=q; clRender(false);
+      toast("✦ Claude isn't connected yet — add the API key in Supabase first"); b.disabled=false; return;
     }
     if(!res.ok||j.error)throw new Error(j.error||'Request failed');
-    lastClaudeText=j.text; r.textContent=j.text;
+    lastClaudeText=j.text;
+    _clLog.push({role:'assistant',content:j.text});
     $('cl-save').style.display='';
     if(ME.email_connected)$('cl-mail').style.display='';
-  }catch(e){r.textContent='⚠️ '+(e.message||e);}
-  b.disabled=false;
+    const lbl=$('cl-lbl'); if(lbl)lbl.textContent='Ask a follow-up — Claude remembers this conversation';
+    b.textContent='✦ Send';
+    const qa=$('cl-q'); if(qa){qa.placeholder='e.g. Make it shorter / change the date / now draft the email…';qa.focus();}
+  }catch(e){_clLog.push({role:'assistant',content:'⚠️ '+(e.message||e)});}
+  clRender(false); b.disabled=false;
 }
 async function saveClaude(id){
   const n=cur.notes.find(x=>x.id===id);
