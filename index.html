@@ -517,8 +517,8 @@ function railBoard(){
       ${cur.cols.map(x=>{const xs=statsFor(cur.notes,x.id);
         const flag=cur.notes.some(nn=>nn.column_id===x.id&&(dueState(nn)||{}).cls&&dueState(nn).cls!=='ok');
         return `<button class="rcol ${x.id===S.col?'sel':''}" style="background:${x.color}" draggable="true"
-          ondragstart="dragCol('${x.id}')" ondragover="event.preventDefault()" ondrop="dropCol('${x.id}')"
-          onclick="selectCol('${x.id}')" title="${esc(x.name)} — ${xs.p}% done${flag?' · deadline approaching!':''} · drag to reorder">
+          ondragstart="dragCol('${x.id}')" ondragover="event.preventDefault()" ondrop="dropOnCol('${x.id}')"
+          onclick="selectCol('${x.id}')" title="${esc(x.name)} — ${xs.p}% done${flag?' · deadline approaching!':''} · drag to reorder · drop a note here to move it">
           ${flag?'<span title="Deadline approaching">⚠</span>':''}<span class="rname">${esc(x.name)}</span><span class="rcount">${xs.d}/${xs.t}</span>
         </button>`;}).join('')}
       <button class="add-rail" onclick="addCol()">＋ Add column</button>
@@ -541,7 +541,7 @@ function railBoard(){
         ${notes.map(n=>{const u=usr(n.assignee);
           const st=n.subtasks||[]; const sd=st.filter(s=>s.d).length;
           const shortDesc=n.description&&n.description.length>170?n.description.slice(0,170)+'…':n.description;
-          return `<div class="note ${n.done?'done':''}" style="--note-c:${c.color};--note-bg:${tint(c.color,13)}" onclick="editNote('${n.id}')" title="Click to open & edit">
+          return `<div class="note ${n.done?'done':''}" style="--note-c:${c.color};--note-bg:${tint(c.color,13)}" draggable="true" ondragstart="dragNote(event,'${n.id}')" onclick="editNote('${n.id}')" title="Click to open & edit · drag onto a category on the left to move">
             <h4>${esc(n.title)}</h4>${dueChip(n)}<p>${esc(shortDesc)}</p>
             ${st.length?`<div style="margin-bottom:8px">
               ${st.map((s,i)=>`<div style="display:flex;gap:7px;align-items:center;padding:2px 0">
@@ -597,9 +597,21 @@ async function delCol(id){
   try{const {error}=await sb.from('columns').delete().eq('id',id); if(error)throw error;
   await loadEvent(); render();}catch(e){fail(e);}
 }
-let _dragCol=null;
-function dragCol(id){_dragCol=id;}
-async function dropCol(targetId){
+let _dragCol=null, _dragNote=null;
+function dragCol(id){_dragCol=id;_dragNote=null;}
+function dragNote(ev,id){ev.stopPropagation();_dragNote=id;_dragCol=null;}
+async function dropOnCol(targetId){
+  if(_dragNote){
+    const id=_dragNote; _dragNote=null;
+    const n=cur.notes.find(x=>x.id===id);
+    if(!n||n.column_id===targetId)return;
+    const cName=cur.cols.find(c=>c.id===targetId)?.name||'';
+    try{
+      const {error}=await sb.from('notes').update({column_id:targetId}).eq('id',id); if(error)throw error;
+      await loadEvent(); render(); toast(`📌 Moved to ${esc(cName)}`);
+    }catch(e){fail(e);}
+    return;
+  }
   if(!_dragCol||_dragCol===targetId){_dragCol=null;return;}
   const from=cur.cols.findIndex(c=>c.id===_dragCol);
   const item=cur.cols.splice(from,1)[0];
