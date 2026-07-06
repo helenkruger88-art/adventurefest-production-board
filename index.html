@@ -306,7 +306,177 @@ async function loadEvent(){
   cur={cols:c.data,notes:n.data,files:f.data,msgs:m.data.reverse(),atts:a.data,invs:iv.data,pins:pn.data,emails:em.data,acts:ac.data};
   await signFiles();
 }
-async function refresh(){ try{ await loadCore(); await loadEvent(); render(); }catch(e){fail(e);} }
+async function refresh(){ try{ await loadCore(); await loadEvent(); await loadToday(); render(); }catch(e){fail(e);} }
+
+/* ---------- TODAY (cross-board daily to-do) ---------- */
+let TD=[], TDN={}, TDC={};
+const saDate=()=>new Date(Date.now()+2*3600*1000).toISOString().slice(0,10);
+const tdDone=t=>t.note_id?!!(TDN[t.note_id]&&TDN[t.note_id].done):!!t.done;
+async function loadToday(){
+  if(!ME)return;
+  const {data,error}=await sb.from('today_items').select('*').eq('user_id',ME.id).eq('for_date',saDate()).order('position');
+  if(error){console.error(error);return;}
+  TD=data||[];
+  const ids=TD.map(t=>t.note_id).filter(Boolean);
+  TDN={};TDC={};
+  if(ids.length){
+    const [{data:ns},{data:cs}]=await Promise.all([
+      sb.from('notes').select('id,title,done,archived,due_date,warn_days,column_id,event_id,assignee').in('id',ids),
+      sb.from('columns').select('id,name,color,event_id'),
+    ]);
+    (ns||[]).forEach(n=>TDN[n.id]=n);
+    (cs||[]).forEach(c=>TDC[c.id]=c);
+  }
+}
+async function ensureToday(){
+  if(!ME)return;
+  const today=saDate();
+  const {data:existing}=await sb.from('today_items').select('id').eq('user_id',ME.id).eq('for_date',today).limit(1);
+  if(existing&&existing.length){await loadToday();return;}
+  const rows=[]; let pos=0;
+  // carry over unfinished items from the most recent previous list
+  const {data:prev}=await sb.from('today_items').select('*').eq('user_id',ME.id).lt('for_date',today).order('for_date',{ascending:false}).limit(40);
+  const prevDate=prev&&prev.length?prev[0].for_date:null;
+  const carried=new Set();
+  if(prevDate){
+    const pids=prev.filter(p=>p.for_date===prevDate&&!p.removed&&p.note_id).map(p=>p.note_id);
+    let openPrev={};
+    if(pids.length){const {data:pn}=await sb.from('notes').select('id,done,archived').in('id',pids);(pn||[]).forEach(n=>openPrev[n.id]=n);}
+    for(const p of prev.filter(p=>p.for_date===prevDate&&!p.removed)){
+      if(p.note_id){const n=openPrev[p.note_id]; if(n&&!n.done&&!n.archived){rows.push({user_id:ME.id,for_date:today,note_id:p.note_id,reason:'carried over',position:pos++});carried.add(p.note_id);}}
+      else if(!p.done&&p.text_line){rows.push({user_id:ME.id,for_date:today,text_line:p.text_line,reason:'carried over',position:pos++});}
+    }
+  }
+  // auto-pick from every board I can see: overdue + inside flag window (mine or unassigned)
+  const {data:cand}=await sb.from('notes').select('id,title,done,archived,due_date,warn_days,assignee').eq('done',false).eq('archived',false).not('due_date','is',null);
+  const t0=new Date(today+'T00:00:00Z').getTime();
+  for(const n of (cand||[])){
+    if(carried.has(n.id))continue;
+    if(n.assignee&&n.assignee!==ME.id)continue;
+    const days=Math.round((new Date(n.due_date+'T00:00:00Z').getTime()-t0)/86400000);
+    if(days>(n.warn_days??7))continue;
+    rows.push({user_id:ME.id,for_date:today,note_id:n.id,reason:days<0?`overdue ${-days}d`:days===0?'due today':`due in ${days}d`,position:pos++});
+  }
+  if(rows.length){const {error}=await sb.from('today_items').insert(rows);if(error)console.error(error);}
+  else{await sb.from('today_items').insert({user_id:ME.id,for_date:today,text_line:null,reason:'__init__',removed:true,position:0});}
+  await loadToday();
+}
+function tdReason(t){
+  if(!t.note_id)return t.reason==='carried over'?'carried over':'';
+  const n=TDN[t.note_id]; if(!n)return t.reason;
+  if(n.due_date){
+    const days=Math.round((new Date(n.due_date+'T00:00:00Z').getTime()-new Date(saDate()+'T00:00:00Z').getTime())/86400000);
+    if(days<0)return `overdue ${-days} day${days===-1?'':'s'}`;
+    if(days===0)return 'due today';
+    if(days<=(n.warn_days??7))return `due in ${days} day${days===1?'':'s'}`;
+  }
+  return t.reason||'';
+}
+function todayView(){
+  const items=TD.filter(t=>!t.removed&&t.reason!=='__init__'&&(t.note_id?TDN[t.note_id]&&!TDN[t.note_id].archived:t.text_line));
+  const open=items.filter(t=>!tdDone(t)), doneItems=items.filter(t=>tdDone(t));
+  const over=open.filter(t=>/^overdue/.test(tdReason(t))).length;
+  const dateLbl=new Date().toLocaleDateString('en-ZA',{weekday:'long',day:'numeric',month:'long'});
+  const row=t=>{
+    const n=t.note_id?TDN[t.note_id]:null;
+    const c=n?TDC[n.column_id]:null;
+    const ev=n?EVENTS.find(e=>e.id===n.event_id):null;
+    const r=tdReason(t); const overdue=/^overdue/.test(r); const d=tdDone(t);
+    return `<div class="task-row ${d?'done':''}" draggable="true" ondragstart="tdDrag(event,'${t.id}')" ondragover="event.preventDefault()" ondrop="tdDrop(event,'${t.id}')" style="--c:${c?c.color:'#B4B2A9'};${overdue&&!d?'background:#FCEEEC;':''}">
+      <button class="chk ${d?'on':''}" onclick="tdToggle('${t.id}')">${d?'✔':''}</button>
+      <div class="t" style="min-width:0">
+        <b style="${d?'text-decoration:line-through;opacity:.55':''}">${esc(n?n.title:t.text_line)}</b>
+        <span style="color:${c?c.color:'var(--muted)'}">${n?`${ev?esc(ev.name):''}${ev&&ev.private_to?' 🔒':''} › ${c?esc(c.name):''}`:'quick job — not on a board'}</span>
+      </div>
+      ${r?`<span style="flex:none;font-size:11px;font-weight:800;border-radius:9px;padding:2px 9px;${overdue?'background:#F7C1C1;color:#791F1F':r==='carried over'?'background:#EEE9DB;color:#6d6858':'background:#FAEEDA;color:#854F0B'}">${esc(r)}</span>`:''}
+      ${n?`<button class="btn ghost" style="flex:none;padding:4px 10px;font-size:11px" onclick="tdOpen('${t.id}')">open ↗</button>`:''}
+      <button style="flex:none;background:none;color:${C.lava};font-weight:800" title="Not today — remove from this list" onclick="tdRemove('${t.id}')">✕</button>
+    </div>`;
+  };
+  return `<div class="view-title"><h2>☀️ Today</h2>
+    <span class="sub">${dateLbl} · your day across every board — only you see this list</span>
+    ${over?`<span class="pill" style="background:${C.lava}">${over} overdue</span>`:''}
+    <span class="pill" style="background:${C.forest}">${doneItems.length}/${items.length} done</span>
+    <button class="btn ghost no-print" style="margin-left:auto" onclick="tdRebuild()">↻ Rebuild from boards</button>
+  </div>
+  <div class="panel" style="margin-top:14px">
+    ${open.map(row).join('')||'<p style="color:var(--muted);font-weight:600;padding:4px 2px">Nothing on your list — enjoy it, or pull tasks in with ↻ Rebuild, the ☀ button on any sticky note, or a quick line below.</p>'}
+    ${doneItems.length?`<div style="margin-top:10px;padding-top:8px;border-top:1px solid #F0EADC;font-size:11.5px;font-weight:800;color:var(--muted)">DONE TODAY</div>${doneItems.map(row).join('')}`:''}
+    <div style="display:flex;gap:8px;margin-top:14px">
+      <input id="td-new" placeholder="＋ Add a quick job for today… (Enter to add)" onkeydown="if(event.key==='Enter'){event.preventDefault();tdAddManual();}">
+      <button class="btn" onclick="tdAddManual()">＋ Add</button>
+    </div>
+    <p style="font-size:11.5px;color:var(--muted);margin:10px 0 0">Ticking a board task here ticks the real sticky note too · unfinished items carry over tomorrow · drag to reorder</p>
+  </div>`;
+}
+async function tdToggle(id){
+  const t=TD.find(x=>x.id===id); if(!t)return;
+  try{
+    if(t.note_id){const n=TDN[t.note_id]; const {error}=await sb.from('notes').update({done:!n.done}).eq('id',t.note_id); if(error)throw error; n.done=!n.done;
+      if(n.done)toast(`✔ Done — ticked on the ${esc((EVENTS.find(e=>e.id===n.event_id)||{}).name||'')} board too`);}
+    else{const {error}=await sb.from('today_items').update({done:!t.done}).eq('id',id); if(error)throw error; t.done=!t.done;}
+    render();
+  }catch(e){fail(e);}
+}
+async function tdRemove(id){
+  try{const {error}=await sb.from('today_items').update({removed:true}).eq('id',id); if(error)throw error;
+  const t=TD.find(x=>x.id===id); if(t)t.removed=true; render();}catch(e){fail(e);}
+}
+async function tdAddManual(){
+  const el=$('td-new'); const v=el?el.value.trim():''; if(!v)return;
+  try{const {data,error}=await sb.from('today_items').insert({user_id:ME.id,for_date:saDate(),text_line:v,position:TD.length}).select().single();
+  if(error)throw error; TD.push(data); if(el)el.value=''; render(); setTimeout(()=>{const e2=$('td-new');if(e2)e2.focus();},30);}catch(e){fail(e);}
+}
+async function tdOpen(id){
+  const t=TD.find(x=>x.id===id); if(!t||!t.note_id)return;
+  const n=TDN[t.note_id]; if(!n)return;
+  await switchEvent(n.event_id); go('board');
+  setTimeout(()=>jumpToNote(n.column_id,n.id),120);
+}
+async function tdRebuild(){
+  const today=saDate();
+  const have=new Set(TD.filter(t=>t.note_id).map(t=>t.note_id));
+  const {data:cand}=await sb.from('notes').select('id,done,archived,due_date,warn_days,assignee').eq('done',false).eq('archived',false).not('due_date','is',null);
+  const t0=new Date(today+'T00:00:00Z').getTime();
+  const rows=[]; let pos=TD.length;
+  for(const n of (cand||[])){
+    if(have.has(n.id))continue;
+    if(n.assignee&&n.assignee!==ME.id)continue;
+    const days=Math.round((new Date(n.due_date+'T00:00:00Z').getTime()-t0)/86400000);
+    if(days>(n.warn_days??7))continue;
+    rows.push({user_id:ME.id,for_date:today,note_id:n.id,position:pos++});
+  }
+  try{
+    if(rows.length){const {error}=await sb.from('today_items').insert(rows); if(error)throw error;}
+    await loadToday(); render();
+    toast(rows.length?`↻ Added ${rows.length} task${rows.length>1?'s':''} that need${rows.length>1?'':'s'} you`:'↻ Nothing new — your list already covers it');
+  }catch(e){fail(e);}
+}
+async function addToToday(noteId){
+  const today=saDate();
+  try{
+    const ex=TD.find(t=>t.note_id===noteId);
+    if(ex){if(ex.removed){await sb.from('today_items').update({removed:false}).eq('id',ex.id);ex.removed=false;render();}
+      toast('☀ On your Today list');return;}
+    const {data,error}=await sb.from('today_items').insert({user_id:ME.id,for_date:today,note_id:noteId,position:TD.length}).select().single();
+    if(error)throw error; TD.push(data); await loadToday(); render(); toast('☀ Added to your Today list');
+  }catch(e){fail(e);}
+}
+let _tdDrag=null;
+function tdDrag(ev,id){ev.stopPropagation();_tdDrag=id;}
+async function tdDrop(ev,targetId){
+  ev.stopPropagation();ev.preventDefault();
+  if(!_tdDrag||_tdDrag===targetId){_tdDrag=null;return;}
+  const id=_tdDrag;_tdDrag=null;
+  const list=TD.filter(t=>!t.removed).sort((a,b)=>a.position-b.position);
+  const from=list.findIndex(t=>t.id===id); if(from<0)return;
+  const item=list.splice(from,1)[0];
+  const to=list.findIndex(t=>t.id===targetId); if(to<0)return;
+  list.splice(to,0,item);
+  list.forEach((t,i)=>t.position=i);
+  render();
+  try{for(const t of list){const {error}=await sb.from('today_items').update({position:t.position}).eq('id',t.id); if(error)throw error;}}catch(e){fail(e);}
+}
 
 let rt=null, rtTimer=null;
 function subscribeRealtime(){
@@ -350,6 +520,7 @@ function render(){
     </div>
     <div class="tabs">
       <button class="${S.view==='home'?'active':''}" onclick="go('home')">🏠 Home</button>
+      <button class="${S.view==='today'?'active':''}" onclick="go('today')">☀️ Today${(()=>{const o=TD.filter(t=>!t.removed&&!tdDone(t)).length;return o?`<span class="dot" style="position:static;margin-left:5px">${o}</span>`:'';})()}</button>
       <button class="${S.view==='board'?'active':''}" onclick="go('board')">📋 Board</button>
       <button class="${S.view==='my'?'active':''}" onclick="go('my')">🗂 My Board</button>
       <button class="${S.view==='progress'?'active':''}" onclick="go('progress')">📊 Progress</button>
@@ -365,11 +536,12 @@ function render(){
       <span onclick="teamModal()">${avatar(ME)}</span>
     </div>
   </nav>
-  <main>${{home:homeView,board:boardView,my:myView,progress:progressView,report:reportView,ask:askView,money:moneyView}[S.view]()}</main>`;
+  <main>${{home:homeView,today:todayView,board:boardView,my:myView,progress:progressView,report:reportView,ask:askView,money:moneyView}[S.view]()}</main>`;
 }
 function go(v){
   S.view=v;
   if(v==='home'){loadHomeStats().then(render).catch(fail);}
+  if(v==='today'){loadToday().then(render).catch(fail);}
   if(v==='my') markRead();
   render();
 }
@@ -744,6 +916,7 @@ function railBoard(){
             <div class="meta">
               <button class="chk ${n.done?'on':''}" onclick="event.stopPropagation();toggleDone('${n.id}')">${n.done?'✔':''}</button>
               ${u?avatar(u):''}<span class="who">${u?esc(u.name.split(' ')[0]):'Unassigned'}</span>
+              <button style="background:none;font-size:13px;padding:0 2px" title="Add to my Today list" onclick="event.stopPropagation();addToToday('${n.id}')">☀</button>
               <button class="claude-chip" onclick="event.stopPropagation();askClaude('${n.id}')">✦ Ask Claude</button>
             </div>
           </div>`;}).join('')||'<p style="color:var(--muted);font-weight:600;padding:6px 2px">No sticky notes here yet.</p>'}
@@ -1503,6 +1676,7 @@ $('overlay').addEventListener('click',e=>{if(e.target.id==='overlay')closeModal(
 async function bootData(){
   try{
     await loadCore(); await loadEvent(); await loadHomeStats();
+    await ensureToday();
     subscribeRealtime(); render();
   }catch(e){ fail(e); render(); }
 }
