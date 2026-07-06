@@ -68,10 +68,11 @@ main{padding:26px 26px 70px;max-width:1500px;margin:0 auto}
 .avatars .avatar:first-child{margin-left:0}
 .btn{background:var(--ink);color:#F2EDE2;padding:9px 16px;border-radius:10px;font-weight:700;font-size:13px}
 .btn:hover{background:#40435a}
-.btn.ghost{background:transparent;color:var(--ink);border:2px dashed #C9C2B0}
+.btn.ghost{background:#fff;color:var(--ink);border:1px solid #DAD3C2;font-weight:600}
+.btn.ghost:hover{border-color:#B8AF98;background:#FBF8F0}
 .btn.orange{background:var(--fire)} .btn.orange:hover{background:#b8481a}
 .btn:disabled{opacity:.5;cursor:wait}
-.new-event{border:3px dashed #D5CDBA;border-radius:var(--radius);display:flex;align-items:center;justify-content:center;
+.new-event{border:1px solid #DAD3C2;background:#FFFDF8;border-radius:var(--radius);display:flex;align-items:center;justify-content:center;
   min-height:220px;color:var(--muted);font-weight:700;cursor:pointer;font-size:15px;background:transparent}
 .new-event:hover{border-color:var(--fire);color:var(--fire)}
 
@@ -85,7 +86,7 @@ main{padding:26px 26px 70px;max-width:1500px;margin:0 auto}
 .col-head button:hover{background:rgba(255,255,255,.35)}
 .col.drag-over{outline:3px dashed var(--fire);outline-offset:3px}
 .files-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px}
-.file-chip{background:#fff;border:2px solid #E6DFCE;border-radius:20px;padding:6px 13px;font-size:12px;font-weight:700;color:var(--ink);display:inline-flex;gap:6px;align-items:center;cursor:pointer;text-decoration:none}
+.file-chip{background:#fff;border:1px solid #E0D9C8;border-radius:18px;padding:7px 14px;font-size:12px;font-weight:600;color:var(--ink);display:inline-flex;gap:6px;align-items:center;cursor:pointer;text-decoration:none;transition:border-color .15s,background .15s}
 summary.file-chip{list-style:none}
 summary.file-chip::-webkit-details-marker{display:none}
 body.drag-note .rcol{outline:2px dashed rgba(255,255,255,.95);outline-offset:-5px;transform:scale(1.02)}
@@ -112,10 +113,10 @@ body.drag-note .rcol{outline:2px dashed rgba(255,255,255,.95);outline-offset:-5p
 .claude-chip{display:inline-flex;align-items:center;gap:4px;background:#fff;border:1.5px solid var(--note-c,#aaa);
   color:var(--ink);font-size:10.5px;font-weight:800;border-radius:14px;padding:3px 9px}
 .claude-chip:hover{background:var(--ink);color:#fff}
-.add-note{border:2px dashed #cfc7b2;background:transparent;border-radius:8px;padding:9px;font-weight:700;
+.add-note{border:1px solid #DAD3C2;background:#fff;border-radius:8px;padding:9px;font-weight:600;
   color:var(--muted);font-size:12.5px;margin:0 12px}
 .add-note:hover{color:var(--fire);border-color:var(--fire)}
-.add-col{min-width:230px;border:3px dashed #D5CDBA;border-radius:var(--radius);padding:40px 10px;color:var(--muted);
+.add-col{min-width:230px;border:1px solid #DAD3C2;background:#FFFDF8;border-radius:var(--radius);padding:40px 10px;color:var(--muted);
   font-weight:700;background:transparent;font-size:14px}
 .add-col:hover{border-color:var(--fire);color:var(--fire)}
 
@@ -129,7 +130,7 @@ body.drag-note .rcol{outline:2px dashed rgba(255,255,255,.95);outline-offset:-5p
 .rcol.sel{opacity:1;outline:3px solid var(--ink);transform:translateX(4px)}
 .rcol .rname{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .rcol .rcount{background:rgba(255,255,255,.28);border-radius:12px;font-size:11px;padding:2px 8px}
-.rail .add-rail{border:2px dashed #cfc7b2;background:transparent;border-radius:10px;padding:10px;font-weight:700;color:var(--muted);font-size:12.5px}
+.rail .add-rail{border:1px solid #DAD3C2;background:#fff;border-radius:10px;padding:10px;font-weight:600;color:var(--muted);font-size:12.5px}
 .rail .add-rail:hover{color:var(--fire);border-color:var(--fire)}
 .open-col{flex:1;min-width:0;background:rgba(255,255,255,.72);backdrop-filter:blur(3px);border-radius:var(--radius);
   box-shadow:0 5px 16px rgba(43,45,58,.07);padding-bottom:14px}
@@ -768,13 +769,13 @@ function boardView(){
       ?`<a href="${esc(f.url)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none">🗂 ${esc(f.name)}</a>`
       :`<span onclick="toast('No link saved for this folder yet')">🗂 ${esc(f.name)}</span>`}
       <button style="background:none;color:${C.lava};font-weight:800;padding:0 0 0 4px" title="Remove folder link" onclick="delDrive('${f.id}')">✕</button></span>`).join('')}
-    <span class="file-chip" style="border-style:dashed;color:var(--muted)" onclick="linkDrive()">＋ Link Drive folder</span>
+    <span class="file-chip" style="color:var(--muted)" onclick="linkDrive()">＋ Link Drive folder</span>
     <span style="width:14px"></span>
     <span style="font-size:12px;font-weight:800;color:var(--muted)">📌 PINNED</span>
     ${(cur.pins||[]).map(p=>`<span class="file-chip" style="border-color:#D9C79A;background:#FBF6E8">
       <a href="${esc(p.url)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none">🔗 ${esc(p.name)}</a>
       <button style="background:none;color:${C.lava};font-weight:800;padding:0 0 0 4px" title="Unpin" onclick="delPin('${p.id}')">✕</button></span>`).join('')}
-    <span class="file-chip" style="border-style:dashed;color:var(--muted)" onclick="addPin()">＋ Pin a website</span>
+    <span class="file-chip" style="color:var(--muted)" onclick="addPin()">＋ Pin a website</span>
     <span style="flex:1"></span>
     <input id="board-q" value="${esc(_q)}" placeholder="🔍 Search this event…" oninput="boardSearch(this.value)"
       style="width:190px;padding:7px 12px;border:2px solid #E6DFCE;border-radius:20px;font-size:12.5px;font-weight:600;background:#fff">
