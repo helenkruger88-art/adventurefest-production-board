@@ -449,15 +449,15 @@ function homeView(){
       </div>`;}).join('')}
     <button class="new-event" onclick="newEventModal()">＋ &nbsp;New event board</button>
   </div>
-  ${(()=>{const priv=EVENTS.filter(e=>e.private_to===ME.id); if(!priv.length)return '';
-    return `<div class="view-title" style="margin-top:26px"><h2 style="font-size:19px">🔒 My private boards</h2><span class="sub">Only you can see these — the team can't</span></div>
+  ${(()=>{const priv=EVENTS.filter(e=>e.private_to&&(e.private_to===ME.id||(e.shared_with||[]).includes(ME.id))); if(!priv.length)return '';
+    return `<div class="view-title" style="margin-top:26px"><h2 style="font-size:19px">🔒 My private boards</h2><span class="sub">Only you — and anyone a board is shared with — can see these</span></div>
     <div class="home-grid">
       ${priv.map(e=>{
         const notes=(eventStatsCache.notes||cur.notes||[]).filter(n=>n.event_id===e.id);
         const cols=(eventStatsCache.cols||cur.cols||[]).filter(c=>c.event_id===e.id);
         const s=statsFor(notes);
         return `<div class="event-card" style="border-top-color:${C.ink}">
-          <h3>🔒 ${esc(e.name)}</h3><div class="date">📅 ${esc(e.date_label)} &nbsp;·&nbsp; private to you</div>
+          <h3>🔒 ${esc(e.name)}</h3><div class="date">📅 ${esc(e.date_label)} &nbsp;·&nbsp; ${e.private_to===ME.id?((e.shared_with||[]).length?`you + ${(e.shared_with||[]).length} shared`:'private to you'):`shared by ${esc((usr(e.private_to)||{name:'a teammate'}).name.split(' ')[0])}`}</div>
           <div class="big-progress"><i style="width:${s.p}%"></i></div>
           <div class="pct-row"><span>${s.d} of ${s.t} tasks done</span><span>${s.p}%</span></div>
           <div class="minibars">
@@ -468,7 +468,7 @@ function homeView(){
               </div>`;}).join('')||'<span style="font-size:12px;color:var(--muted);font-weight:600">No categories yet</span>'}
           </div>
           <div class="card-foot">
-            <div class="avatars">${avatar(ME)}</div>
+            <div class="avatars">${[e.private_to,...(e.shared_with||[])].map(id=>{const u=usr(id);return u?avatar(u):'';}).join('')}</div>
             <button class="btn" onclick="S.event='${e.id}';switchEvent('${e.id}').then(()=>go('board'))">Open board →</button>
           </div>
         </div>`;}).join('')}
@@ -491,6 +491,31 @@ async function loadBrief(force){
     _briefText=j.text;
     const b=$('brief-box'); if(b)b.textContent=j.text;
   }catch(e){const b=$('brief-box'); if(b)b.textContent='⚠️ Brief unavailable: '+(e.message||e);}
+}
+function shareBoard(){
+  const e=evRow(); if(!e||e.private_to!==ME.id)return;
+  const others=PROFILES.filter(p=>p.id!==ME.id);
+  if(!others.length){toast('No other team members yet — add them via your avatar menu');return;}
+  const sw=e.shared_with||[];
+  openModal(`<h3>👥 Share “${esc(e.name)}”</h3>
+    <p style="font-size:13px;color:var(--muted);margin:4px 0 12px">Tick who may see this private board. Everyone else on the team still can't see it.</p>
+    ${others.map(p=>`<label style="display:flex;align-items:center;gap:10px;text-transform:none;letter-spacing:0;font-size:14px;cursor:pointer;padding:7px 4px;border-bottom:1px solid #F0EADC">
+      <input type="checkbox" class="share-cb" value="${p.id}" ${sw.includes(p.id)?'checked':''} style="width:auto">
+      ${avatar(p)} ${esc(p.name)} <span style="color:var(--muted);font-size:12px">· ${esc(p.role||'')}</span>
+    </label>`).join('')}
+    <div class="row">
+      <button class="btn ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn orange" onclick="saveShare()">Save sharing</button>
+    </div>`);
+}
+async function saveShare(){
+  const ids=[...document.querySelectorAll('.share-cb')].filter(c=>c.checked).map(c=>c.value);
+  try{
+    const {error}=await sb.from('events').update({shared_with:ids}).eq('id',S.event); if(error)throw error;
+    for(const id of ids)if(!(evRow().shared_with||[]).includes(id))await notify(id,`${ME.name.split(' ')[0]} shared a private board with you: ${evRow().name}`);
+    closeModal(); await loadCore(); await loadEvent(); render();
+    toast(ids.length?`👥 Shared with ${ids.length} team member${ids.length>1?'s':''}`:'🔒 Back to only you');
+  }catch(e){fail(e);}
 }
 async function dupEvent(srcId){
   const src=EVENTS.find(e=>e.id===srcId); if(!src)return;
@@ -557,7 +582,10 @@ function boardView(){
   const s=statsFor(cur.notes);
   return `<div class="view-title"><h2>${esc(e.name)}</h2>
     <span class="sub">📅 ${esc(e.date_label)}</span>
-    ${e.private_to?`<span class="pill" style="background:${C.ink}" title="Only you can see this board">🔒 Private — only you</span>`:''}
+    ${e.private_to?(()=>{const sw=e.shared_with||[];
+      const label=e.private_to===ME.id?(sw.length?`🔒 Private — you + ${sw.length}`:'🔒 Private — only you'):`🔒 Shared with you by ${esc((usr(e.private_to)||{name:'a teammate'}).name.split(' ')[0])}`;
+      return `<span class="pill" style="background:${C.ink}" title="Not visible to the rest of the team">${label}</span>
+      ${e.private_to===ME.id?`<button class="btn ghost no-print" style="padding:6px 12px;font-size:12px" onclick="shareBoard()">👥 Share…</button>`:''}`;})():''}
     <span class="pill" style="background:${C.forest}">${s.p}% complete</span>
     <button class="btn ghost no-print" style="margin-left:auto" onclick="renameEvent()">✎ Event</button>
     <button class="btn ghost no-print" onclick="addCol()">＋ Add column</button>
