@@ -289,9 +289,9 @@ async function loadCore(){
   if(!EVENTS.find(x=>x.id===S.event)) S.event = EVENTS[0]?.id || null;
 }
 async function loadEvent(){
-  if(!S.event){cur={cols:[],notes:[],files:[],msgs:[],atts:[],invs:[],pins:[]};return;}
+  if(!S.event){cur={cols:[],notes:[],files:[],msgs:[],atts:[],invs:[],pins:[],emails:[],acts:[]};return;}
   localStorage.setItem('afsa_event', S.event);
-  const [c,n,f,m,a,iv,pn] = await Promise.all([
+  const [c,n,f,m,a,iv,pn,em,ac] = await Promise.all([
     sb.from('columns').select('*').eq('event_id',S.event).order('position'),
     sb.from('notes').select('*').eq('event_id',S.event).order('created_at'),
     sb.from('drive_links').select('*').eq('event_id',S.event).order('name'),
@@ -299,9 +299,11 @@ async function loadEvent(){
     sb.from('column_files').select('*').eq('event_id',S.event).order('created_at'),
     sb.from('invoices').select('*').eq('event_id',S.event).order('created_at'),
     sb.from('pins').select('*').eq('event_id',S.event).order('created_at'),
+    sb.from('emails').select('*').eq('event_id',S.event).order('received_at',{ascending:false}),
+    sb.from('activity').select('*').eq('event_id',S.event).order('created_at',{ascending:false}).limit(60),
   ]);
-  if(c.error)throw c.error; if(n.error)throw n.error; if(f.error)throw f.error; if(m.error)throw m.error; if(a.error)throw a.error; if(iv.error)throw iv.error; if(pn.error)throw pn.error;
-  cur={cols:c.data,notes:n.data,files:f.data,msgs:m.data.reverse(),atts:a.data,invs:iv.data,pins:pn.data};
+  if(c.error)throw c.error; if(n.error)throw n.error; if(f.error)throw f.error; if(m.error)throw m.error; if(a.error)throw a.error; if(iv.error)throw iv.error; if(pn.error)throw pn.error; if(em.error)throw em.error; if(ac.error)throw ac.error;
+  cur={cols:c.data,notes:n.data,files:f.data,msgs:m.data.reverse(),atts:a.data,invs:iv.data,pins:pn.data,emails:em.data,acts:ac.data};
   await signFiles();
 }
 async function refresh(){ try{ await loadCore(); await loadEvent(); render(); }catch(e){fail(e);} }
@@ -441,6 +443,7 @@ function homeView(){
         </div>
         <div class="card-foot">
           <div class="avatars">${PROFILES.map(u=>avatar(u)).join('')}</div>
+          <button class="btn ghost" title="Copy this board's categories and tasks as a template for a new event" onclick="dupEvent('${e.id}')">⧉</button>
           <button class="btn" onclick="S.event='${e.id}';switchEvent('${e.id}').then(()=>go('board'))">Open board →</button>
         </div>
       </div>`;}).join('')}
@@ -464,6 +467,37 @@ async function loadBrief(force){
     _briefText=j.text;
     const b=$('brief-box'); if(b)b.textContent=j.text;
   }catch(e){const b=$('brief-box'); if(b)b.textContent='⚠️ Brief unavailable: '+(e.message||e);}
+}
+async function dupEvent(srcId){
+  const src=EVENTS.find(e=>e.id===srcId); if(!src)return;
+  const name=prompt(`New event name (copying the structure of "${src.name}"):`); if(!name)return;
+  const date=prompt('Date label (e.g. 14–15 Nov 2027):')||'';
+  const withTasks=confirm('Also copy the tasks (as unticked to-dos, without deadlines or owners)?\n\nOK = categories + tasks · Cancel = categories only');
+  try{
+    const {data:ev,error}=await sb.from('events').insert({name:name.trim(),date_label:date.trim(),created_by:ME.id}).select().single();
+    if(error)throw error;
+    const {data:srcCols,error:e2}=await sb.from('columns').select('*').eq('event_id',srcId).order('position');
+    if(e2)throw e2;
+    const map={};
+    for(const c of srcCols){
+      const {data:nc,error:e3}=await sb.from('columns').insert({event_id:ev.id,name:c.name,color:c.color,position:c.position}).select().single();
+      if(e3)throw e3; map[c.id]=nc.id;
+    }
+    if(withTasks){
+      const {data:srcNotes,error:e4}=await sb.from('notes').select('*').eq('event_id',srcId);
+      if(e4)throw e4;
+      for(const n of srcNotes){
+        if(!map[n.column_id])continue;
+        const {error:e5}=await sb.from('notes').insert({event_id:ev.id,column_id:map[n.column_id],title:n.title,description:n.description||'',
+          subtasks:(n.subtasks||[]).map(s=>({t:s.t,d:false})),warn_days:n.warn_days??7,position:n.position??0,created_by:ME.id});
+        if(e5)throw e5;
+      }
+    }
+    await loadCore(); S.event=ev.id; await loadEvent();
+    if(S.view==='home')await loadHomeStats();
+    render();
+    toast(`⧉ "${esc(name)}" created from the ${esc(src.name)} template`);
+  }catch(e){fail(e);}
 }
 function newEventModal(){
   openModal(`<h3>New event board</h3>
@@ -513,8 +547,87 @@ function boardView(){
       <a href="${esc(p.url)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none">🔗 ${esc(p.name)}</a>
       <button style="background:none;color:${C.lava};font-weight:800;padding:0 0 0 4px" title="Unpin" onclick="delPin('${p.id}')">✕</button></span>`).join('')}
     <span class="file-chip" style="border-style:dashed;color:var(--muted)" onclick="addPin()">＋ Pin a website</span>
+    <span style="flex:1"></span>
+    <input id="board-q" value="${esc(_q)}" placeholder="🔍 Search this event…" oninput="boardSearch(this.value)"
+      style="width:190px;padding:7px 12px;border:2px solid #E6DFCE;border-radius:20px;font-size:12.5px;font-weight:600;background:#fff">
+    <span class="file-chip" style="${_panel==='mail'?`background:${C.forest};color:#fff;border-color:${C.forest}`:''}" onclick="togglePanel('mail')">✉ Emails (${(cur.emails||[]).length})</span>
+    <span class="file-chip" style="${_panel==='act'?`background:${C.ink};color:#fff;border-color:${C.ink}`:''}" onclick="togglePanel('act')">🕑 Activity</span>
   </div>
+  <div id="search-panel">${_q?searchInner():''}</div>
+  ${_panel==='mail'?mailPanel():''}
+  ${_panel==='act'?actPanel():''}
   ${railBoard()}`;
+}
+let _panel=null,_mailOpen=null,_mailNote=null,_q='';
+function togglePanel(p){_panel=_panel===p?null:p;_mailNote=null;render();}
+function boardSearch(v){
+  _q=v;
+  const el=$('search-panel'); if(el)el.innerHTML=_q?searchInner():'';
+}
+function panelBox(title,inner){
+  return `<div class="no-print" style="margin:12px 0 4px;background:#fff;border:2px solid #E6DFCE;border-radius:14px;overflow:hidden">
+    <div style="padding:10px 15px;border-bottom:1px solid #F0EADC;font-size:12px;font-weight:800;color:var(--muted);display:flex;align-items:center">${title}</div>
+    <div style="max-height:46vh;overflow-y:auto">${inner}</div></div>`;
+}
+function searchInner(){
+  const q=_q.trim().toLowerCase(); if(!q)return '';
+  const hit=s=>String(s||'').toLowerCase().includes(q);
+  const notes=cur.notes.filter(n=>hit(n.title)||hit(n.description)||(n.subtasks||[]).some(s=>hit(s.t))).slice(0,12);
+  const files=[...(cur.atts||[]).filter(a=>hit(a.name)),...(cur.files||[]).filter(f=>hit(f.name))].slice(0,8);
+  const mails=(cur.emails||[]).filter(e=>hit(e.subject)||hit(e.from_addr)||hit(e.body)).slice(0,8);
+  const pins=(cur.pins||[]).filter(p=>hit(p.name)||hit(p.url)).slice(0,5);
+  const cName=id=>esc(cur.cols.find(c=>c.id===id)?.name||'');
+  const row=(icon,main,sub,click)=>`<div onclick="${click}" style="display:flex;gap:10px;align-items:center;padding:9px 15px;border-bottom:1px solid #F7F3E8;cursor:pointer" onmouseover="this.style.background='#FBF8F0'" onmouseout="this.style.background=''">
+    <span style="font-size:15px">${icon}</span>
+    <span style="flex:1;min-width:0"><b style="font-size:13.5px">${main}</b><span style="display:block;font-size:11.5px;color:var(--muted)">${sub}</span></span></div>`;
+  let out='';
+  out+=notes.map(n=>row(n.done?'✔':'📌',esc(n.title),cName(n.column_id)+(n.archived?' · archived':''),`jumpToNote('${n.column_id}','${n.id}')`)).join('');
+  out+=files.map(f=>row('📄',esc(f.name),f.column_id?cName(f.column_id):'Drive folder',f.url?`window.open('${esc(f.url)}','_blank')`:'void(0)')).join('');
+  out+=mails.map(e=>row('📩',esc(e.subject),esc(e.from_addr)+' · '+esc(e.filed_to||''),`openMailAt('${e.id}')`)).join('');
+  out+=pins.map(p=>row('🔗',esc(p.name),'pinned website',`window.open('${esc(p.url)}','_blank')`)).join('');
+  if(!out)out='<div style="padding:14px 15px;font-size:13px;color:var(--muted)">Nothing found for “'+esc(_q)+'” on this event.</div>';
+  return panelBox('🔍 Results for “'+esc(_q)+'”',out);
+}
+function jumpToNote(colId,noteId){
+  _q=''; _panel=null; S.col=colId; localStorage.setItem('afsa_col_'+S.event,colId); render();
+  setTimeout(()=>{const el=document.getElementById('note-'+noteId);
+    if(el){el.scrollIntoView({behavior:'smooth',block:'center'});el.style.outline=`3px solid ${C.fire}`;el.style.outlineOffset='3px';
+      setTimeout(()=>{el.style.outline='';},2200);}},80);
+}
+function fmtMailDate(d){try{return new Date(d).toLocaleDateString('en-ZA',{day:'numeric',month:'short'});}catch(_){return '';}}
+function openMailAt(id){_panel='mail';_mailOpen=id;_mailNote=null;_q='';render();
+  setTimeout(()=>{const el=document.getElementById('mail-'+id);if(el)el.scrollIntoView({behavior:'smooth',block:'center'});},80);}
+function noteMails(noteId){
+  const list=(cur.emails||[]).filter(e=>e.note_id===noteId);
+  _panel='mail';_mailNote=noteId;_mailOpen=list[0]?list[0].id:null;render();
+  setTimeout(()=>{const el=$('search-panel');const mp=document.getElementById('mail-panel');if(mp)mp.scrollIntoView({behavior:'smooth',block:'nearest'});},80);
+}
+function toggleMail(id){_mailOpen=_mailOpen===id?null:id;render();}
+function mailPanel(){
+  const list=(cur.emails||[]).filter(e=>!_mailNote||e.note_id===_mailNote);
+  const inner=list.map(e=>`<div id="mail-${e.id}" style="border-bottom:1px solid #F7F3E8">
+    <div onclick="toggleMail('${e.id}')" style="display:flex;gap:10px;align-items:baseline;padding:10px 15px;cursor:pointer" onmouseover="this.style.background='#FBF8F0'" onmouseout="this.style.background=''">
+      <span style="font-size:14px">📩</span>
+      <span style="flex:1;min-width:0">
+        <b style="font-size:13.5px">${esc(e.subject)}</b>
+        <span style="display:block;font-size:11.5px;color:var(--muted)">${esc(e.from_addr)} · filed to ${esc(e.filed_to||'inbox')}</span>
+      </span>
+      <span style="font-size:11.5px;color:var(--muted);flex:none">${fmtMailDate(e.received_at)} ${_mailOpen===e.id?'▴':'▾'}</span>
+    </div>
+    ${_mailOpen===e.id?`<div style="margin:0 15px 12px;background:#FBF8F0;border:1px solid #F0EADC;border-radius:10px;padding:11px 13px;font-size:13px;line-height:1.6;white-space:pre-wrap;max-height:34vh;overflow-y:auto">${esc(e.body||e.summary||'(no readable text)')}</div>
+    ${e.note_id&&cur.notes.find(n=>n.id===e.note_id)?`<div style="margin:0 15px 12px"><button class="btn ghost" style="font-size:11.5px;padding:5px 12px" onclick="jumpToNote('${cur.notes.find(n=>n.id===e.note_id).column_id}','${e.note_id}')">📌 Go to task</button></div>`:''}`:''}
+  </div>`).join('')||'<div style="padding:14px 15px;font-size:13px;color:var(--muted)">No emails filed to this event yet. Anything sent to boards@adventurefest.co.za lands here automatically.</div>';
+  const head=`✉ Board inbox · boards@adventurefest.co.za${_mailNote?` · <button style="background:none;font-size:11px;font-weight:800;color:${C.fire};margin-left:8px" onclick="_mailNote=null;render()">showing one task — show all ✕</button>`:''}`;
+  return `<div id="mail-panel">${panelBox(head,inner)}</div>`;
+}
+function actPanel(){
+  const inner=(cur.acts||[]).map(a=>{const u=a.actor?usr(a.actor):null;
+    return `<div style="display:flex;gap:10px;align-items:center;padding:8px 15px;border-bottom:1px solid #F7F3E8">
+      <span style="font-size:14px">${a.icon||'•'}</span>
+      <span style="flex:1;font-size:13px"><b>${u?esc(u.name.split(' ')[0]):'Board 🤖'}</b> ${esc(a.body)}</span>
+      <span style="font-size:11px;color:var(--muted);flex:none">${ago(a.created_at)}</span>
+    </div>`;}).join('')||'<div style="padding:14px 15px;font-size:13px;color:var(--muted)">No activity yet — changes on the board will show here.</div>';
+  return panelBox('🕑 Recent activity on this event',inner);
 }
 function railBoard(){
   if(!cur.cols.length) return `<div class="empty-board" style="width:100%"><div style="font-size:34px">🗂</div>No categories yet.<br><button class="btn orange" style="margin-top:12px" onclick="addCol()">＋ Add your first column</button></div>`;
@@ -522,7 +635,8 @@ function railBoard(){
   if(!cur.cols.find(c=>c.id===S.col)) S.col = cur.cols[0].id;
   const c=cur.cols.find(x=>x.id===S.col);
   const cs=statsFor(cur.notes,c.id);
-  const notes=cur.notes.filter(n=>n.column_id===c.id).sort(noteSort);
+  const notes=cur.notes.filter(n=>n.column_id===c.id&&!n.archived).sort(noteSort);
+  const archived=cur.notes.filter(n=>n.column_id===c.id&&n.archived);
   return `<div class="board-wrap">
     <div class="rail">
       ${cur.cols.map(x=>{const xs=statsFor(cur.notes,x.id);
@@ -537,6 +651,7 @@ function railBoard(){
     <div class="open-col">
       <div class="col-head" style="background:${c.color};cursor:default">
         <h3>${esc(c.name)}</h3><span class="count">${cs.d}/${cs.t} · ${cs.p}% done</span>
+        ${notes.some(n=>n.done)?`<button title="Archive all done notes in this category" onclick="archiveDone('${c.id}')">🗃</button>`:''}
         <button title="Rename" onclick="renameCol('${c.id}')">✎</button>
         <button title="Delete" onclick="delCol('${c.id}')">✕</button>
       </div>
@@ -559,8 +674,8 @@ function railBoard(){
         ${notes.map(n=>{const u=usr(n.assignee);
           const st=n.subtasks||[]; const sd=st.filter(s=>s.d).length;
           const shortDesc=n.description&&n.description.length>170?n.description.slice(0,170)+'…':n.description;
-          return `<div class="note ${n.done?'done':''}" style="--note-c:${c.color};--note-bg:${tint(c.color,13)}" draggable="true" ondragstart="dragNote(event,'${n.id}')" ondragend="document.body.classList.remove('drag-note')" ondragover="event.preventDefault()" ondrop="dropOnNote(event,'${n.id}')" onclick="editNote('${n.id}')" title="Click to open & edit · drag onto another note to reorder · drag onto a category on the left to move">
-            <h4>${esc(n.title)}</h4>${dueChip(n)}${(()=>{const na=(cur.atts||[]).filter(a=>a.note_id===n.id).length;return na?`<span style="display:inline-block;font-size:10.5px;font-weight:800;color:#6d6858;background:rgba(0,0,0,.06);border-radius:8px;padding:1px 7px;margin-bottom:5px">📎 ${na} file${na>1?'s':''}</span>`:'';})()}<p>${esc(shortDesc)}</p>
+          return `<div class="note ${n.done?'done':''}" id="note-${n.id}" style="--note-c:${c.color};--note-bg:${tint(c.color,13)}" draggable="true" ondragstart="dragNote(event,'${n.id}')" ondragend="document.body.classList.remove('drag-note')" ondragover="event.preventDefault()" ondrop="dropOnNote(event,'${n.id}')" onclick="editNote('${n.id}')" title="Click to open & edit · drag onto another note to reorder · drag onto a category on the left to move">
+            <h4>${esc(n.title)}</h4>${dueChip(n)}${(()=>{const na=(cur.atts||[]).filter(a=>a.note_id===n.id).length;return na?`<span style="display:inline-block;font-size:10.5px;font-weight:800;color:#6d6858;background:rgba(0,0,0,.06);border-radius:8px;padding:1px 7px;margin-bottom:5px">📎 ${na} file${na>1?'s':''}</span>`:'';})()}${(()=>{const ne=(cur.emails||[]).filter(e=>e.note_id===n.id).length;return ne?`<span onclick="event.stopPropagation();noteMails('${n.id}')" title="Read the email${ne>1?'s':''} filed to this task" style="display:inline-block;cursor:pointer;font-size:10.5px;font-weight:800;color:#0F6E56;background:rgba(15,110,86,.09);border-radius:8px;padding:1px 7px;margin:0 0 5px 4px">✉ ${ne} email${ne>1?'s':''}</span>`:'';})()}<p>${esc(shortDesc)}</p>
             ${st.length?`<div style="margin-bottom:8px">
               ${st.map((s,i)=>`<div style="display:flex;gap:7px;align-items:center;padding:2px 0">
                 <button class="chk ${s.d?'on':''}" style="width:16px;height:16px;font-size:10px;border-radius:5px" onclick="event.stopPropagation();cardSubToggle('${n.id}',${i})">${s.d?'✔':''}</button>
@@ -578,8 +693,30 @@ function railBoard(){
           </div>`;}).join('')||'<p style="color:var(--muted);font-weight:600;padding:6px 2px">No sticky notes here yet.</p>'}
       </div>
       <button class="add-note" style="margin:12px 16px 0" onclick="addNoteModal('${c.id}')">＋ Add sticky note</button>
+      ${archived.length?`<details style="margin:14px 16px 4px">
+        <summary style="list-style:none;cursor:pointer;font-size:12px;font-weight:800;color:var(--muted);user-select:none">🗃 Done archive (${archived.length}) ▾</summary>
+        ${archived.map(n=>`<div style="display:flex;gap:9px;align-items:center;padding:6px 4px;border-bottom:1px solid #F0EADC">
+          <span style="flex:1;font-size:12.5px;text-decoration:line-through;opacity:.6;cursor:pointer" onclick="editNote('${n.id}')">${esc(n.title)}</span>
+          <button style="background:none;font-size:11px;font-weight:800;color:${C.fire}" title="Bring back to the board" onclick="unarchiveNote('${n.id}')">↩ Restore</button>
+        </div>`).join('')}
+      </details>`:''}
     </div>
   </div>`;
+}
+async function archiveDone(colId){
+  const done=cur.notes.filter(n=>n.column_id===colId&&n.done&&!n.archived);
+  if(!done.length)return;
+  if(!confirm(`Archive ${done.length} completed note${done.length>1?'s':''}? They stay counted in Progress and can be restored anytime.`))return;
+  try{
+    const {error}=await sb.from('notes').update({archived:true}).eq('column_id',colId).eq('done',true).eq('archived',false);
+    if(error)throw error;
+    await sb.from('activity').insert({event_id:S.event,actor:ME.id,body:`archived ${done.length} done note${done.length>1?'s':''} in "${cur.cols.find(c=>c.id===colId)?.name||''}"`,icon:'🗃'});
+    await loadEvent(); render(); toast('🗃 Archived — see the Done archive at the bottom of the column');
+  }catch(e){fail(e);}
+}
+async function unarchiveNote(id){
+  try{const {error}=await sb.from('notes').update({archived:false}).eq('id',id); if(error)throw error;
+  await loadEvent(); render();}catch(e){fail(e);}
 }
 function selectCol(id){S.col=id;localStorage.setItem('afsa_col_'+S.event,id);render();}
 async function renameEvent(){
@@ -947,7 +1084,7 @@ async function saveClaude(id){
 /* ---------- MY BOARD ---------- */
 function myView(){
   const e=evRow();
-  const mine=cur.notes.filter(n=>n.assignee===ME.id);
+  const mine=cur.notes.filter(n=>n.assignee===ME.id&&!n.archived);
   return `<div class="view-title"><h2>My Board</h2>
     <span class="sub">${esc(ME.name)} · ${esc(ME.role)} ${e?'· '+esc(e.name):''}</span>
     <span class="pill" style="background:${ME.color}">${mine.filter(n=>!n.done).length} open</span></div>
