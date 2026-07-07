@@ -584,6 +584,26 @@ function go(v){
 async function switchEvent(id){S.event=id;try{await loadEvent();render();}catch(e){fail(e);}}
 
 /* ---------- LOGIN ---------- */
+async function forgotPw(){
+  const pre=$('li-email')?$('li-email').value.trim():'';
+  const email=prompt('Your account email — a reset link will be sent to it:',pre); if(!email)return;
+  try{
+    const {error}=await sb.auth.resetPasswordForEmail(email.trim(),{redirectTo:location.origin+location.pathname});
+    if(error)throw error;
+    toast('📬 Reset link sent — check your email (and spam folder)');
+  }catch(e){fail(e);}
+}
+function resetPwModal(){
+  openModal(`<h3>Set a new password</h3>
+    <p style="font-size:13px;color:var(--muted);margin:4px 0 10px">You followed a password-reset link. Choose a new password to finish.</p>
+    <label>New password (min 8 characters)</label><input id="rp-new" type="password">
+    <div class="row"><button class="btn orange" onclick="doResetPw()">Save new password</button></div>`);
+}
+async function doResetPw(){
+  const pw=$('rp-new').value; if(pw.length<8){toast('Minimum 8 characters');return;}
+  try{const {error}=await sb.auth.updateUser({password:pw}); if(error)throw error;
+  closeModal(); toast('🔑 Password updated — you are signed in');}catch(e){fail(e);}
+}
 function loginView(){
   return `<div class="login">
     <div style="text-align:center">
@@ -599,7 +619,8 @@ function loginView(){
         <button type="button" id="pw-eye" onclick="togglePw()" title="Show password" style="position:absolute;right:13px;top:12px;background:none;font-size:17px">👁</button>
       </div>
       <button class="btn orange" id="li-go" style="width:100%;padding:12px" onclick="doLogin()">Sign in</button>
-      <div style="font-size:11.5px;color:#999;margin-top:14px;font-weight:600">Accounts are created by your team admin.</div>
+      <button type="button" style="width:100%;background:none;color:#8C6A47;font-weight:600;font-size:12.5px;margin-top:12px;text-decoration:underline" onclick="forgotPw()">Forgot password?</button>
+      <div style="font-size:11.5px;color:#999;margin-top:10px;font-weight:600">Accounts are created by your team admin.</div>
     </div>
   </div>`;
 }
@@ -1612,9 +1633,12 @@ function reportView(){
 
 /* ---------- TEAM ---------- */
 function teamModal(){
-  openModal(`<h3>👥 Team</h3>
+  openModal(`<h3>${ic('users',16)} Team</h3>
     ${PROFILES.map(u=>`<div class="member-row">${avatar(u)}
-      <div class="m"><b>${esc(u.name)}${u.id===ME.id?' (you)':''}</b><span>${esc(u.role||'')} · ${esc(u.email)}</span></div></div>`).join('')}
+      <div class="m"><b>${esc(u.name)}${u.id===ME.id?' (you)':''}</b><span>${esc(u.role||'')} · ${esc(u.email)}</span></div>
+      <button style="background:none;color:#8a8471;padding:3px" title="Edit member" onclick="editMemberModal('${u.id}')">${ic('pencil',13)}</button>
+      ${u.id!==ME.id?`<button style="background:none;color:#B3261E;padding:3px" title="Remove from the team" onclick="deleteMember('${u.id}')">${ic('trash',13)}</button>`:''}
+    </div>`).join('')}
     <h3 style="margin-top:22px">＋ Add team member</h3>
     <label>Full name</label><input id="tm-name" placeholder="e.g. Riaan Venter">
     <label>Email</label><input id="tm-email" type="email" placeholder="name@adventurefestsa.co.za">
@@ -1630,6 +1654,48 @@ function teamModal(){
       <button class="btn ghost" onclick="signOut()">Sign out</button>
       <button class="btn orange" id="tm-go" onclick="inviteMember()">Add member</button>
     </div>`);
+}
+function editMemberModal(id){
+  const u=PROFILES.find(p=>p.id===id); if(!u)return;
+  openModal(`<h3>${ic('pencil',15)} Edit ${esc(u.name.split(' ')[0])}</h3>
+    <label>Full name</label><input id="em2-name" value="${esc(u.name)}">
+    <label>Role</label><input id="em2-role" value="${esc(u.role||'')}">
+    <label>Colour</label>
+    <div class="swatch-pick" id="em2-colors">${Object.values(C).slice(0,9).map(c=>`<button style="background:${c}" class="${c===u.color?'sel':''}" onclick="pickColor(this)" data-c="${c}"></button>`).join('')}</div>
+    <div class="row">
+      <button class="btn ghost" onclick="teamModal()">Back</button>
+      <button class="btn orange" onclick="saveMember('${id}')">Save changes</button>
+    </div>`);
+}
+async function saveMember(id){
+  const name=$('em2-name').value.trim(); if(!name){toast('Name is required');return;}
+  const role=$('em2-role').value.trim();
+  const sel=document.querySelector('#em2-colors .sel');
+  const color=sel?sel.dataset.c:null;
+  try{
+    const {data:{session}}=await sb.auth.getSession();
+    const res=await fetch(`${SUPABASE_URL}/functions/v1/user-admin`,{
+      method:'POST',
+      headers:{'Content-Type':'application/json','apikey':SUPABASE_KEY,'Authorization':`Bearer ${session.access_token}`},
+      body:JSON.stringify({action:'update',id,name,role,color}),
+    });
+    const j=await res.json(); if(!res.ok||j.error)throw new Error(j.error||'Could not update');
+    await loadCore(); teamModal(); toast('Member updated');
+  }catch(e){fail(e);}
+}
+async function deleteMember(id){
+  const u=PROFILES.find(p=>p.id===id); if(!u)return;
+  if(!confirm(`Remove ${u.name} from the team?\n\nTheir login stops working. Tasks allocated to them become unassigned (nothing is deleted). Their private boards transfer to you.`))return;
+  try{
+    const {data:{session}}=await sb.auth.getSession();
+    const res=await fetch(`${SUPABASE_URL}/functions/v1/user-admin`,{
+      method:'POST',
+      headers:{'Content-Type':'application/json','apikey':SUPABASE_KEY,'Authorization':`Bearer ${session.access_token}`},
+      body:JSON.stringify({action:'delete',id}),
+    });
+    const j=await res.json(); if(!res.ok||j.error)throw new Error(j.error||'Could not remove');
+    await loadCore(); await loadEvent(); teamModal(); toast(`${u.name.split(' ')[0]} removed from the team`);
+  }catch(e){fail(e);}
 }
 function connectEmailModal(){
   const dom=(ME.email.split('@')[1]||'');
@@ -1702,7 +1768,8 @@ async function inviteMember(){
     });
     const j=await res.json();
     if(!res.ok)throw new Error(j.error||'Could not create the account');
-    await loadCore(); teamModal(); toast(`🎉 ${name.split(' ')[0]} added — they can sign in now`);
+    await loadCore(); teamModal();
+    toast(j.emailed?`🎉 ${name.split(' ')[0]} added — login details emailed to them`:`🎉 ${name.split(' ')[0]} added — the welcome email could not be sent, share the password with them yourself`);
   }catch(e){fail(e);b.disabled=false;}
 }
 function changePwModal(){
@@ -1737,7 +1804,11 @@ async function bootData(){
   const {data:{session}}=await sb.auth.getSession();
   SESSION=session;
   if(SESSION) await bootData(); else render();
-  sb.auth.onAuthStateChange((_ev,s)=>{ SESSION=s; if(!s)render(); });
+  sb.auth.onAuthStateChange((ev,s)=>{
+    SESSION=s;
+    if(ev==='PASSWORD_RECOVERY'){ bootData().then(()=>resetPwModal()).catch(()=>resetPwModal()); return; }
+    if(!s)render();
+  });
 })();
 </script>
 </body>
